@@ -17,6 +17,7 @@ import PaymentsPage      from './pages/Payments/PaymentsPage';
 import KpiPage           from './pages/KPI/KpiPage';
 import NotificationsPage from './pages/Notifications/NotificationsPage';
 import AIDashboardPage   from './pages/AI/AIDashboardPage';
+import ReportsPage       from './pages/Reports/ReportsPage';
 
 function App() {
   return (
@@ -52,6 +53,7 @@ function App() {
             <Route path="/vehicles"      element={<VehiclesPage />} />
             <Route path="/kpi"           element={<KpiPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/reports"       element={<ReportsPage />} />
 
             {/* Admin + Super Admin only */}
             <Route path="/ai-dashboard" element={

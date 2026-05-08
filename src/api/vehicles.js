@@ -19,7 +19,7 @@ const vehiclesAPI = {
 
   // PATCH /vehicles/{id}/status
   setStatus: (id, status) =>
-    api.patch(`/vehicles/{id}/status`, { status }),
+    api.patch(`/vehicles/${id}/status`, { status }),
 
   // GET /vehicles/alerts
   getAlerts: () =>

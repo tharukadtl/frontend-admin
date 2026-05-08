@@ -59,10 +59,17 @@ export default function UsersPage() {
   };
 
   const handleSave = async () => {
+    if (!form.fullName.trim()) return alert('Full Name is required.');
+    if (!form.username.trim()) return alert('Username is required.');
+    if (modal === 'create' && !form.password) return alert('Password is required.');
+
+    const payload = { ...form, branchId: form.branchId || null };
+    if (modal === 'edit') delete payload.password;
+
     setSaving(true);
     try {
-      if (modal === 'create') await userApi.create(form);
-      else                    await userApi.update(editId, form);
+      if (modal === 'create') await userApi.create(payload);
+      else                    await userApi.update(editId, payload);
       setModal(null);
       loadUsers();
     } catch (err) {

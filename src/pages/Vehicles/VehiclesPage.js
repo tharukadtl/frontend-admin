@@ -45,10 +45,20 @@ export default function VehiclesPage() {
   };
 
   const handleSave = async () => {
+    if (!form.branchId) return alert('Please select a branch.');
     setSaving(true);
+    const payload = {
+      ...form,
+      branchId:             Number(form.branchId),
+      modelYear:            form.modelYear   ? Number(form.modelYear)   : null,
+      currentOdometer:      form.currentOdometer !== '' ? Number(form.currentOdometer) : 0,
+      insuranceExpiry:      form.insuranceExpiry      || null,
+      revenueLicenseExpiry: form.revenueLicenseExpiry || null,
+      emissionTestExpiry:   form.emissionTestExpiry   || null,
+    };
     try {
-      if (!editId) await vehicleApi.create(form);
-      else         await vehicleApi.update(editId, form);
+      if (!editId) await vehicleApi.create(payload);
+      else         await vehicleApi.update(editId, payload);
       setModal(null); loadAll();
     } catch (err) { alert(err.response?.data?.message || 'Save failed'); }
     finally { setSaving(false); }
@@ -76,11 +86,11 @@ export default function VehiclesPage() {
     { key: 'id', label: 'Actions', render: (id, row) => (
       <div style={{ display: 'flex', gap: 6 }}>
         <Btn small onClick={e => { e.stopPropagation(); openEdit(row); }}>Edit</Btn>
-        {row.status === 'ACTIVE' && (
-          <Btn small color="#e65100" onClick={e => { e.stopPropagation(); handleSetStatus(id, 'UNDER_MAINTENANCE'); }}>Maint.</Btn>
+        {row.status === 'AVAILABLE' && (
+          <Btn small color="#e65100" onClick={e => { e.stopPropagation(); handleSetStatus(id, 'UNDER_REPAIR'); }}>Maint.</Btn>
         )}
-        {row.status === 'UNDER_MAINTENANCE' && (
-          <Btn small color="#1b5e20" onClick={e => { e.stopPropagation(); handleSetStatus(id, 'ACTIVE'); }}>Activate</Btn>
+        {row.status === 'UNDER_REPAIR' && (
+          <Btn small color="#1b5e20" onClick={e => { e.stopPropagation(); handleSetStatus(id, 'AVAILABLE'); }}>Activate</Btn>
         )}
       </div>
     )},

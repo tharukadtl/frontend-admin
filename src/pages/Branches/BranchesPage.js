@@ -1,91 +1,392 @@
-import React, { useState, useEffect } from 'react';
-import { DataTable, StatusBadge, PageHeader, Btn, Modal, FormField, inputStyle } from '../../components/index';
-import branchApi from '../../api/branches';
+import React, { useState, useEffect, useCallback } from 'react';
 
-const EMPTY = { name: '', code: '', address: '', phone: '', managerName: '', district: '' };
+const API = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+const tok = () => localStorage.getItem('accessToken');
+const req = (method, path, body) =>
+    fetch(`${API}${path}`, {
+      method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+      body: body ? JSON.stringify(body) : undefined,
+    }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); });
+const get  = p      => req('GET',  p);
+const post = (p, b) => req('POST', p, b);
+const put  = (p, b) => req('PUT',  p, b);
 
-export default function BranchesPage() {
-  const [branches, setBranches] = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [modal, setModal]       = useState(null);
-  const [form, setForm]         = useState(EMPTY);
-  const [editId, setEditId]     = useState(null);
-  const [saving, setSaving]     = useState(false);
+const B = {
+  bg:'#FAFAF7', surface:'#FFFFFF', s2:'#F4F2EC', border:'#D6D2C4', b2:'#E8E5DA',
+  text:'#1C1C14', muted:'#666058', dim:'#A8A398',
+  forest:'#1A4A2E', forestL:'#E8F2EB', forestD:'#0F3020',
+  clay:'#8B4513', clayL:'#F5EBE0',
+  slate:'#2C3E50', slateL:'#EBF0F5',
+  sky:'#0077AA', skyL:'#E0F4FF',
+  gold:'#8B6914', goldL:'#FFF8E0',
+  green:'#15803D', greenL:'#DCFCE7',
+  red:'#DC2626', redL:'#FEE2E2',
+  white:'#FFFFFF',
+};
 
-  useEffect(() => { loadBranches(); }, []);
+const Skel = ({h=14,w='100%',r=6}) => (
+    <div style={{height:h,width:w,borderRadius:r,background:`linear-gradient(90deg,${B.s2} 25%,${B.border} 50%,${B.s2} 75%)`,backgroundSize:'400% 100%',animation:'br-shim 1.5s ease infinite'}}/>
+);
 
-  const loadBranches = async () => {
-    setLoading(true);
-    try { const res = await branchApi.getAll(); setBranches(res.data || []); }
-    catch (err) { console.error(err); }
-    finally { setLoading(false); }
-  };
+const Toast = ({msg,type,onDone}) => {
+  useEffect(()=>{const t=setTimeout(onDone,3000);return()=>clearTimeout(t);},[onDone]);
+  return <div style={{position:'fixed',bottom:24,right:24,zIndex:3000,background:B.surface,border:`2px solid ${type==='success'?B.forest:B.red}`,borderRadius:10,padding:'10px 18px',display:'flex',alignItems:'center',gap:8,fontSize:13,color:B.text,boxShadow:'0 4px 20px rgba(0,0,0,0.1)',animation:'br-fin 0.2s ease'}}>{type==='success'?'✅':'❌'} {msg}</div>;
+};
 
-  const openCreate = () => { setForm(EMPTY); setEditId(null); setModal('form'); };
-  const openEdit   = (b) => {
-    setForm({ name: b.name, code: b.code, address: b.address, phone: b.phone,
-              managerName: b.managerName, district: b.district });
-    setEditId(b.id); setModal('form');
-  };
+// ─── Branch Form Modal ────────────────────────────────────────────────────────
+function BranchModal({ branch, open, onClose, onSuccess }) {
+  const isEdit = !!branch;
+  const init = { name:'', code:'', address:'', region:'', phone:'', email:'' };
+  const [form, setForm] = useState(init);
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = async () => {
+  useEffect(() => {
+    if (open) setForm(isEdit ? {
+      name:branch.name||'', code:branch.code||'',
+      address:branch.address||'', region:branch.region||'',
+      phone:branch.phone||'', email:branch.email||'',
+    } : init);
+  }, [open, branch]);
+
+  useEffect(() => {
+    const fn = e => e.key==='Escape' && onClose();
+    if (open) document.addEventListener('keydown', fn);
+    return () => document.removeEventListener('keydown', fn);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  const f = k => v => setForm(p => ({ ...p, [k]:v }));
+
+  const save = async () => {
+    if (!form.name.trim()) return;
     setSaving(true);
     try {
-      if (!editId) await branchApi.create(form);
-      else         await branchApi.update(editId, form);
-      setModal(null); loadBranches();
-    } catch (err) { alert(err.response?.data?.message || 'Save failed'); }
+      if (isEdit) await put(`/api/branches/${branch.id}`, form);
+      else await post('/api/branches', form);
+      onSuccess(isEdit ? 'Branch updated' : 'Branch created', 'success');
+      onClose();
+    } catch { onSuccess('Save failed', 'error'); }
     finally { setSaving(false); }
   };
 
-  const handleDeactivate = async (id) => {
-    if (!window.confirm('Deactivate this branch?')) return;
-    try { await branchApi.deactivate(id); loadBranches(); }
-    catch (err) { alert(err.response?.data?.message || 'Failed'); }
-  };
-
-  const columns = [
-    { key: 'name',        label: 'Branch Name' },
-    { key: 'code',        label: 'Code' },
-    { key: 'district',    label: 'District' },
-    { key: 'managerName', label: 'Manager', render: v => v || '—' },
-    { key: 'phone',       label: 'Phone' },
-    { key: 'isActive',    label: 'Status', render: v => <StatusBadge status={v !== false ? 'ACTIVE' : 'INACTIVE'} /> },
-    { key: 'id', label: 'Actions', render: (id, row) => (
-      <div style={{ display: 'flex', gap: 6 }}>
-        <Btn small onClick={e => { e.stopPropagation(); openEdit(row); }}>Edit</Btn>
-        {row.isActive !== false && (
-          <Btn small color="#c62828" onClick={e => { e.stopPropagation(); handleDeactivate(id); }}>Deactivate</Btn>
-        )}
+  const inp = (label, key, placeholder, type='text', full=false) => (
+      <div style={{ gridColumn: full ? '1/-1' : undefined }}>
+        <div style={{ fontSize:10, fontWeight:800, color:B.muted, letterSpacing:0.6, textTransform:'uppercase', marginBottom:4 }}>{label}</div>
+        <input type={type} value={form[key]} onChange={e => f(key)(e.target.value)} placeholder={placeholder}
+               style={{ width:'100%', background:B.s2, border:`1.5px solid ${B.border}`, borderRadius:8, padding:'9px 12px', fontSize:12, color:B.text, outline:'none', transition:'border-color 0.13s' }}
+               onFocus={e=>e.target.style.borderColor=B.forest} onBlur={e=>e.target.style.borderColor=B.border}
+        />
       </div>
-    )},
-  ];
+  );
 
   return (
-    <div>
-      <PageHeader title="Branches" subtitle="Super Admin only — branch management"
-        actions={<Btn onClick={openCreate}>+ Add Branch</Btn>} />
-
-      <div style={{ background: '#fff', borderRadius: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
-        {loading ? <div style={{ padding: 40, textAlign: 'center' }}>Loading...</div>
-          : <DataTable columns={columns} data={branches} />}
-      </div>
-
-      {modal && (
-        <Modal title={editId ? 'Edit Branch' : 'Add Branch'} onClose={() => setModal(null)}>
-          {[['name','Branch Name',true],['code','Branch Code',true],['district','District',false],
-            ['address','Address',false],['phone','Phone',false],['managerName','Manager Name',false]
-          ].map(([key, label, req]) => (
-            <FormField key={key} label={label} required={req}>
-              <input style={inputStyle} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} />
-            </FormField>
-          ))}
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-            <Btn color="#757575" onClick={() => setModal(null)}>Cancel</Btn>
-            <Btn onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save'}</Btn>
+      <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:'fixed',inset:0,zIndex:1000,background:'rgba(28,28,20,0.55)',backdropFilter:'blur(4px)',display:'flex',alignItems:'center',justifyContent:'center',padding:24,animation:'br-fin 0.18s ease'}}>
+        <div style={{background:B.surface,borderRadius:16,width:'100%',maxWidth:520,border:`1px solid ${B.border}`,boxShadow:'0 20px 60px rgba(0,0,0,0.15)',animation:'br-sld 0.2s ease'}}>
+          <div style={{padding:'18px 22px 14px',borderBottom:`1px solid ${B.border}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div style={{fontSize:16,fontWeight:800,color:B.text}}>{isEdit?`Edit — ${branch.name}`:'Add New Branch'}</div>
+            <button onClick={onClose} style={{background:'none',border:'none',color:B.muted,fontSize:20,cursor:'pointer'}}>×</button>
           </div>
-        </Modal>
-      )}
-    </div>
+          <div style={{padding:'20px 22px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+            {inp('Branch Name *','name','e.g. Colombo North','text',true)}
+            {inp('Branch Code','code','e.g. COL-N')}
+            {inp('Region','region','e.g. Western Province')}
+            {inp('Address','address','Full street address…','text',true)}
+            {inp('Phone','phone','e.g. 011-2345678','tel')}
+            {inp('Email','email','branch@slt.lk','email')}
+          </div>
+          <div style={{padding:'14px 22px',borderTop:`1px solid ${B.border}`,display:'flex',gap:8,justifyContent:'flex-end'}}>
+            <button onClick={onClose} style={{padding:'8px 16px',borderRadius:8,border:`1.5px solid ${B.border}`,background:'transparent',color:B.text,cursor:'pointer',fontSize:12,fontWeight:600}}>Cancel</button>
+            <button onClick={save} disabled={!form.name.trim()||saving} style={{padding:'8px 20px',borderRadius:8,border:'none',background:form.name.trim()&&!saving?B.forest:B.dim,color:B.white,cursor:form.name.trim()&&!saving?'pointer':'not-allowed',fontSize:12,fontWeight:700,transition:'background 0.13s'}}>{saving?'⏳ Saving…':isEdit?'💾 Save':'➕ Create'}</button>
+          </div>
+        </div>
+      </div>
+  );
+}
+
+// ─── Branch Team Detail ───────────────────────────────────────────────────────
+function BranchTeam({ branch, onEdit, onClose }) {
+  const [members, setMembers] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!branch) return;
+    setLoading(true);
+    get('/api/users').then(d => {
+      const all = Array.isArray(d) ? d : d?.content || [];
+      setMembers(all.filter(u =>
+          (u.branch?.id === branch.id || u.branchId === branch.id) &&
+          (u.role === 'TECHNICIAN' || u.role === 'TEAM_LEAD')
+      ));
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [branch?.id]);
+
+  if (!branch) return (
+      <div style={{ background:B.surface, borderRadius:14, border:`1px solid ${B.border}`, padding:'40px 24px', textAlign:'center', color:B.muted, position:'sticky', top:24 }}>
+        <div style={{ fontSize:40, marginBottom:10 }}>🏢</div>
+        <div style={{ fontSize:13, fontWeight:600, color:B.text, marginBottom:4 }}>Select a branch</div>
+        <div style={{ fontSize:12 }}>View team members and branch details</div>
+      </div>
+  );
+
+  const byRole = {};
+  members.forEach(m => {
+    const r = m.role || 'OTHER';
+    if (!byRole[r]) byRole[r] = [];
+    byRole[r].push(m);
+  });
+
+  const ROLE_ORDER = ['TEAM_LEAD','TECHNICIAN','OTHER'];
+  const ROLE_LABEL = { TEAM_LEAD:'Team Lead', TECHNICIAN:'Technicians', OTHER:'Other' };
+  const ROLE_COLOR = { TEAM_LEAD:B.forest, TECHNICIAN:B.sky, OTHER:B.muted };
+
+  return (
+      <div style={{
+        background:B.surface, borderRadius:14, border:`1.5px solid ${B.forest}44`,
+        overflow:'hidden', boxShadow:'0 4px 20px rgba(0,0,0,0.07)',
+        position:'sticky', top:24,
+      }}>
+        {/* Header */}
+        <div style={{
+          padding:'16px 18px', borderBottom:`1px solid ${B.border}`,
+          background:`linear-gradient(135deg,${B.forestL},${B.surface})`,
+          display:'flex', justifyContent:'space-between', alignItems:'flex-start',
+        }}>
+          <div>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+              <span style={{ fontSize:20 }}>🏢</span>
+              <div style={{ fontSize:15, fontWeight:800, color:B.text }}>{branch.name}</div>
+            </div>
+            {branch.code && (
+                <span style={{ fontSize:9, padding:'1px 6px', borderRadius:4, background:B.goldL, color:B.gold, fontWeight:800, marginRight:6 }}>{branch.code}</span>
+            )}
+            <span style={{ fontSize:11, color:B.muted }}>{branch.region || 'No region set'}</span>
+          </div>
+          <div style={{ display:'flex', gap:6 }}>
+            <button onClick={() => onEdit(branch)} style={{ padding:'5px 12px', borderRadius:6, border:`1px solid ${B.forest}`, background:B.forestL, color:B.forest, cursor:'pointer', fontSize:11, fontWeight:700 }}>✏️ Edit</button>
+            <button onClick={onClose} style={{ background:'none', border:'none', color:B.muted, fontSize:18, cursor:'pointer', padding:'0 4px' }}>×</button>
+          </div>
+        </div>
+
+        {/* Contact info */}
+        {(branch.address || branch.phone || branch.email) && (
+            <div style={{ padding:'12px 18px', borderBottom:`1px solid ${B.b2}` }}>
+              {branch.address && <div style={{ fontSize:11, color:B.muted, marginBottom:4 }}>📍 {branch.address}</div>}
+              {branch.phone   && <div style={{ fontSize:11, color:B.muted, marginBottom:4 }}>📞 {branch.phone}</div>}
+              {branch.email   && <div style={{ fontSize:11, color:B.sky }}>✉️ {branch.email}</div>}
+            </div>
+        )}
+
+        {/* Members */}
+        <div style={{ padding:'14px 18px' }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+            <div style={{ fontSize:10, fontWeight:800, color:B.muted, letterSpacing:0.6 }}>TEAM MEMBERS</div>
+            <span style={{ fontSize:11, fontWeight:700, color:B.text }}>{members.length} total</span>
+          </div>
+
+          {loading ? (
+              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                {[...Array(3)].map((_, i) => <Skel key={i} h={40} r={8}/>)}
+              </div>
+          ) : members.length === 0 ? (
+              <div style={{ textAlign:'center', padding:'20px 0', color:B.muted, fontSize:12 }}>
+                No technicians assigned to this branch
+              </div>
+          ) : (
+              ROLE_ORDER.filter(r => byRole[r]?.length).map(role => (
+                  <div key={role} style={{ marginBottom:14 }}>
+                    <div style={{
+                      fontSize:9, fontWeight:800, letterSpacing:0.8, marginBottom:6,
+                      color:ROLE_COLOR[role], textTransform:'uppercase',
+                    }}>
+                      {ROLE_LABEL[role]} ({byRole[role].length})
+                    </div>
+                    {byRole[role].map((m, i) => (
+                        <div key={i} style={{
+                          display:'flex', alignItems:'center', gap:8,
+                          padding:'7px 8px', borderRadius:8, marginBottom:4,
+                          background:B.s2, border:`1px solid ${B.b2}`,
+                        }}>
+                          <div style={{
+                            width:28, height:28, borderRadius:'50%', flexShrink:0,
+                            background:`linear-gradient(135deg,${B.forestD},${B.sky})`,
+                            display:'flex', alignItems:'center', justifyContent:'center',
+                            fontSize:11, fontWeight:800, color:B.white,
+                          }}>
+                            {m.fullName?.charAt(0)?.toUpperCase() || '?'}
+                          </div>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ fontSize:12, fontWeight:700, color:B.text, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                              {m.fullName}
+                            </div>
+                            <div style={{ fontSize:10, color:B.muted }}>{m.phone || m.email || '—'}</div>
+                          </div>
+                          <div style={{
+                            width:7, height:7, borderRadius:'50%', flexShrink:0,
+                            background: m.isActive !== false ? B.green : B.dim,
+                          }}/>
+                        </div>
+                    ))}
+                  </div>
+              ))
+          )}
+        </div>
+      </div>
+  );
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+export default function BranchesPage() {
+  const [branches,   setBranches]   = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [selected,   setSelected]   = useState(null);
+  const [editBranch, setEditBranch] = useState(null);
+  const [formOpen,   setFormOpen]   = useState(false);
+  const [search,     setSearch]     = useState('');
+  const [toast,      setToast]      = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await get('/api/branches');
+      setBranches(Array.isArray(d) ? d : d?.content || []);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = branches.filter(b => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return b.name?.toLowerCase().includes(q) ||
+        b.region?.toLowerCase().includes(q) ||
+        b.code?.toLowerCase().includes(q);
+  });
+
+  useEffect(() => {
+    const id = 'br-css'; if (document.getElementById(id)) return;
+    const s = document.createElement('style'); s.id = id;
+    s.innerHTML = `
+      @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap');
+      @keyframes br-shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+      @keyframes br-fin{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+      @keyframes br-sld{from{opacity:0;transform:translateY(-10px)scale(0.98)}to{opacity:1;transform:none}}
+      .br-page *{box-sizing:border-box;font-family:'Outfit',sans-serif;}
+      .br-card{transition:all 0.15s;cursor:pointer;}
+      .br-card:hover{box-shadow:0 6px 24px rgba(0,0,0,0.1)!important;transform:translateY(-2px)!important;}
+    `;
+    document.head.appendChild(s);
+  }, []);
+
+  return (
+      <div className="br-page" style={{ background:B.bg, minHeight:'100vh', padding:'28px 32px' }}>
+
+        {/* Header */}
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24 }}>
+          <div>
+            <h1 style={{ margin:0, fontSize:24, fontWeight:800, color:B.text }}>Branches</h1>
+            <div style={{ fontSize:12, color:B.muted, marginTop:3 }}>
+              {branches.length} SLT branches across Sri Lanka
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={load} style={{ padding:'8px 14px', borderRadius:8, border:`1.5px solid ${B.border}`, background:B.surface, cursor:'pointer', fontSize:12, fontWeight:700, color:B.text }}>🔄</button>
+            <button onClick={() => { setEditBranch(null); setFormOpen(true); }} style={{
+              padding:'8px 18px', borderRadius:8, border:'none',
+              background:B.forest, color:B.white, cursor:'pointer', fontSize:12, fontWeight:700,
+            }}>➕ Add Branch</button>
+          </div>
+        </div>
+
+        {/* Search */}
+        <div style={{ position:'relative', marginBottom:20, maxWidth:400 }}>
+          <span style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:B.dim }}>🔍</span>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name, code, region…"
+                 style={{ width:'100%', background:B.surface, border:`1.5px solid ${B.border}`, borderRadius:8, padding:'8px 10px 8px 30px', fontSize:12, color:B.text, outline:'none' }}
+                 onFocus={e => e.target.style.borderColor = B.forest}
+                 onBlur={e => e.target.style.borderColor = B.border}
+          />
+        </div>
+
+        {/* Two-col layout */}
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 360px', gap:20, alignItems:'start' }}>
+
+          {/* Branch grid */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))', gap:12 }}>
+            {loading ? [...Array(6)].map((_,i) => (
+                <div key={i} style={{ background:B.surface, borderRadius:12, padding:18, border:`1px solid ${B.border}`, display:'flex', flexDirection:'column', gap:10 }}>
+                  <Skel h={14} w="70%" r={6}/><Skel h={10} w="40%" r={4}/><Skel h={32} r={8}/>
+                </div>
+            )) : filtered.length === 0 ? (
+                <div style={{ gridColumn:'1/-1', textAlign:'center', padding:'48px 24px', color:B.muted }}>
+                  <div style={{ fontSize:36, marginBottom:8 }}>🏢</div>
+                  No branches found
+                </div>
+            ) : filtered.map((br, i) => (
+                <div key={br.id||i} className="br-card"
+                     onClick={() => setSelected(selected?.id === br.id ? null : br)}
+                     style={{
+                       background:B.surface, borderRadius:12, padding:18,
+                       border:`1.5px solid ${selected?.id===br.id ? B.forest : B.border}`,
+                       boxShadow: selected?.id===br.id ? `0 4px 20px ${B.forest}22` : '0 1px 4px rgba(0,0,0,0.04)',
+                       animation:`br-fin 0.3s ease ${i*0.04}s both`,
+                     }}
+                >
+                  <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
+                    <div style={{
+                      width:42, height:42, borderRadius:10, flexShrink:0,
+                      background:`linear-gradient(135deg,${B.forestD},${B.sky})`,
+                      display:'flex', alignItems:'center', justifyContent:'center', fontSize:18,
+                    }}>🏢</div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:14, fontWeight:800, color:B.text, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                        {br.name}
+                      </div>
+                      {br.code && (
+                          <span style={{ fontSize:9, padding:'1px 5px', borderRadius:4, background:B.goldL, color:B.gold, fontWeight:800 }}>
+                      {br.code}
+                    </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {br.region && <div style={{ fontSize:11, color:B.muted, marginBottom:4 }}>📍 {br.region}</div>}
+                  {br.phone  && <div style={{ fontSize:11, color:B.muted, marginBottom:8 }}>📞 {br.phone}</div>}
+
+                  <div style={{ display:'flex', gap:6, justifyContent:'flex-end', paddingTop:6, borderTop:`1px solid ${B.b2}` }}>
+                    <button onClick={e => { e.stopPropagation(); setEditBranch(br); setFormOpen(true); }} style={{
+                      padding:'4px 10px', borderRadius:6, border:`1px solid ${B.border}`,
+                      background:'none', cursor:'pointer', fontSize:10, color:B.muted, transition:'all 0.12s',
+                    }}
+                            onMouseEnter={e => { e.currentTarget.style.borderColor=B.forest; e.currentTarget.style.color=B.forest; }}
+                            onMouseLeave={e => { e.currentTarget.style.borderColor=B.border; e.currentTarget.style.color=B.muted; }}
+                    >✏️ Edit</button>
+                    <button onClick={e => { e.stopPropagation(); setSelected(br); }} style={{
+                      padding:'4px 10px', borderRadius:6,
+                      border:`1px solid ${B.forest}55`, background:B.forestL,
+                      cursor:'pointer', fontSize:10, color:B.forest, fontWeight:700,
+                    }}>👥 Team</button>
+                  </div>
+                </div>
+            ))}
+          </div>
+
+          {/* Detail panel */}
+          <div>
+            <BranchTeam
+                branch={selected}
+                onEdit={br => { setEditBranch(br); setFormOpen(true); }}
+                onClose={() => setSelected(null)}
+            />
+          </div>
+        </div>
+
+        <BranchModal
+            branch={editBranch} open={formOpen}
+            onClose={() => { setFormOpen(false); setEditBranch(null); load(); }}
+            onSuccess={(msg, type) => setToast({ msg, type })}
+        />
+        {toast && <Toast msg={toast.msg} type={toast.type} onDone={() => setToast(null)}/>}
+      </div>
   );
 }
