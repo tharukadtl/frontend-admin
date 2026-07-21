@@ -277,9 +277,17 @@ function ReviewPanel({ payment, onApprove, onReject, onClose }) {
   );
 
   const isPending  = payment.status === 'DRAFT';
-  const photos     = [];
-  const materials  = [];
-  const labourItems= [];
+  // jobPhotosUrls is a comma-separated string column (see SubmitPaymentRequest), not an array.
+  const photos     = (payment.jobPhotosUrls || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+  const hasLabour  = payment.labourStartTime || payment.labourEndTime || payment.hourlyRate;
+
+  // Photos are served from the backend's static /uploads/** route, not the /api host.
+  const resolvePhotoUrl = (p) => {
+    const path = typeof p === 'string' ? p : (p?.url || p?.path || '');
+    if (!path) return '';
+    return /^https?:\/\//i.test(path) ? path : `${API}${path.startsWith('/') ? '' : '/'}${path}`;
+  };
 
   const handleApprove = async () => {
     setLoading(true);
@@ -426,7 +434,7 @@ function ReviewPanel({ payment, onApprove, onReject, onClose }) {
                     marginBottom: 8, position: 'relative',
                   }}>
                     <img
-                        src={photos[photoIdx]?.url || photos[photoIdx]}
+                        src={resolvePhotoUrl(photos[photoIdx])}
                         alt={`Work photo ${photoIdx + 1}`}
                         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                         onError={e => { e.target.style.display = 'none'; }}
@@ -453,7 +461,7 @@ function ReviewPanel({ payment, onApprove, onReject, onClose }) {
                             }}
                         >
                           <img
-                              src={ph?.url || ph}
+                              src={resolvePhotoUrl(ph)}
                               alt={`thumb ${i + 1}`}
                               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                               onError={e => { e.target.style.display = 'none'; }}
@@ -465,136 +473,65 @@ function ReviewPanel({ payment, onApprove, onReject, onClose }) {
               </>
           )}
 
-          {/* Materials table */}
-          {materials.length > 0 && (
-              <>
-                <SectionLabel>Materials Used ({materials.length})</SectionLabel>
-                <div style={{
-                  border: `1px solid ${P.border}`, borderRadius: 10,
-                  overflow: 'hidden', marginBottom: 20,
-                }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                    <tr style={{ background: P.surface }}>
-                      {['Material', 'Qty', 'Unit Price', 'Total', 'Type'].map((h, i) => (
-                          <th key={i} style={{
-                            padding: '8px 12px', textAlign: 'left',
-                            fontSize: 10, fontWeight: 800, color: P.muted,
-                            letterSpacing: 0.6, borderBottom: `1px solid ${P.border}`,
-                            fontFamily: 'IBM Plex Mono, monospace',
-                          }}>{h}</th>
-                      ))}
-                    </tr>
-                    </thead>
-                    <tbody>
-                    {materials.map((m, i) => {
-                      const isFOC = m.isFoc || m.isFOC;
-                      return (
-                          <tr key={i} style={{
-                            borderBottom: i < materials.length - 1
-                                ? `1px solid ${P.border2}` : 'none',
-                          }}>
-                            <td style={{ padding: '9px 12px', fontSize: 12, color: P.text, fontWeight: 600 }}>
-                              {m.materialName || m.name || '—'}
-                            </td>
-                            <td style={{ padding: '9px 12px', fontSize: 12, color: P.muted }}>
-                              {m.quantityUsed || m.quantity || 1}
-                            </td>
-                            <td style={{ padding: '9px 12px', fontSize: 12, color: P.muted }}>
-                              {fmtLKR(m.unitPrice)}
-                            </td>
-                            <td style={{ padding: '9px 12px', fontSize: 12, fontWeight: 700, color: P.text }}>
-                              {fmtLKR(m.totalCost || m.subtotal)}
-                            </td>
-                            <td style={{ padding: '9px 12px' }}>
-                          <span style={{
-                            fontSize: 10, padding: '2px 7px', borderRadius: 4,
-                            fontWeight: 800,
-                            background: isFOC ? P.emeraldL : P.goldL,
-                            color: isFOC ? P.emerald : P.gold,
-                            border: `1px solid ${isFOC ? P.emerald : P.gold}44`,
-                          }}>
-                            {isFOC ? 'FOC' : 'Charge'}
-                          </span>
-                            </td>
-                          </tr>
-                      );
-                    })}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-          )}
-
           {/* Labour */}
-          {labourItems.length > 0 && (
+          {hasLabour && (
               <>
                 <SectionLabel>Labour Charges</SectionLabel>
                 <div style={{
                   border: `1px solid ${P.border}`, borderRadius: 10,
-                  overflow: 'hidden', marginBottom: 20,
+                  padding: 14, marginBottom: 20,
+                  display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12,
                 }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                    <tr style={{ background: P.surface }}>
-                      {['Description', 'Duration', 'Rate', 'Amount', 'Type'].map((h, i) => (
-                          <th key={i} style={{
-                            padding: '8px 12px', textAlign: 'left',
-                            fontSize: 10, fontWeight: 800, color: P.muted,
-                            letterSpacing: 0.6, borderBottom: `1px solid ${P.border}`,
-                            fontFamily: 'IBM Plex Mono, monospace',
-                          }}>{h}</th>
-                      ))}
-                    </tr>
-                    </thead>
-                    <tbody>
-                    {labourItems.map((l, i) => (
-                        <tr key={i} style={{
-                          borderBottom: i < labourItems.length - 1
-                              ? `1px solid ${P.border2}` : 'none',
-                        }}>
-                          <td style={{ padding: '9px 12px', fontSize: 12, color: P.text }}>
-                            {l.description || 'Labour'}
-                          </td>
-                          <td style={{ padding: '9px 12px', fontSize: 12, color: P.muted }}>
-                            {l.hours || l.durationHours || '—'}h
-                          </td>
-                          <td style={{ padding: '9px 12px', fontSize: 12, color: P.muted }}>
-                            {fmtLKR(l.ratePerHour || l.hourlyRate)}
-                          </td>
-                          <td style={{ padding: '9px 12px', fontSize: 12, fontWeight: 700, color: P.text }}>
-                            {fmtLKR(l.amount || l.totalAmount)}
-                          </td>
-                          <td style={{ padding: '9px 12px' }}>
-                        <span style={{
-                          fontSize: 10, padding: '2px 7px', borderRadius: 4,
-                          fontWeight: 800,
-                          background: l.isFoc ? P.emeraldL : P.goldL,
-                          color: l.isFoc ? P.emerald : P.gold,
-                          border: `1px solid ${l.isFoc ? P.emerald : P.gold}44`,
-                        }}>
-                          {l.isFoc ? 'FOC' : 'Charge'}
-                        </span>
-                          </td>
-                        </tr>
-                    ))}
-                    </tbody>
-                  </table>
+                  <div>
+                    <div style={{ fontSize: 10, color: P.muted, fontWeight: 800, marginBottom: 4, letterSpacing: 0.6 }}>START TIME</div>
+                    <div style={{ fontSize: 12, color: P.text }}>{fmtDT(payment.labourStartTime)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: P.muted, fontWeight: 800, marginBottom: 4, letterSpacing: 0.6 }}>END TIME</div>
+                    <div style={{ fontSize: 12, color: P.text }}>{fmtDT(payment.labourEndTime)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: P.muted, fontWeight: 800, marginBottom: 4, letterSpacing: 0.6 }}>HOURLY RATE</div>
+                    <div style={{ fontSize: 12, color: P.text }}>{fmtLKR(payment.hourlyRate)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: P.gold, fontWeight: 800, marginBottom: 4, letterSpacing: 0.6 }}>LABOUR CHARGE (SERVER-COMPUTED)</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: P.gold }}>{fmtLKR(payment.labourCharge)}</div>
+                  </div>
                 </div>
               </>
           )}
 
-          {/* Justification */}
-          {(payment.materialJustification || payment.workSummary) && (
+          {/* Material Justification */}
+          {payment.materialJustification && (
               <>
-                <SectionLabel>Justification / Work Summary</SectionLabel>
+                <SectionLabel action={
+                  <span style={{ fontSize: 10, color: P.dim }}>
+                    {payment.materialJustification.length}/500
+                  </span>
+                }>Material Justification</SectionLabel>
                 <div style={{
                   padding: '12px 14px', borderRadius: 8,
                   background: P.surface, border: `1px solid ${P.border}`,
                   fontSize: 13, color: P.muted, lineHeight: 1.6,
                   fontStyle: 'italic', marginBottom: 20,
                 }}>
-                  "{payment.materialJustification || payment.workSummary}"
+                  "{payment.materialJustification}"
+                </div>
+              </>
+          )}
+
+          {/* Work Summary */}
+          {payment.workSummary && (
+              <>
+                <SectionLabel>Work Summary</SectionLabel>
+                <div style={{
+                  padding: '12px 14px', borderRadius: 8,
+                  background: P.surface, border: `1px solid ${P.border}`,
+                  fontSize: 13, color: P.muted, lineHeight: 1.6,
+                  marginBottom: 20,
+                }}>
+                  {payment.workSummary}
                 </div>
               </>
           )}
