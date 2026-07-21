@@ -360,18 +360,21 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
   };
 
   const isAdminUser = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
-  // Admin assigns to team leads; team lead assigns to technicians in their own branch
+  // Admin assigns to either a Team Lead or a Technician directly (FR-17, SRS 5.5.1);
+  // team lead assigns to technicians in their own branch
   const assignableUsers = isAdminUser
-      ? technicians.filter(t => t.role === 'TEAM_LEAD')
+      ? technicians.filter(t => t.role === 'TEAM_LEAD' || t.role === 'TECHNICIAN')
       : technicians.filter(t => t.role === 'TECHNICIAN' && t.branchId === currentUser?.branchId);
+  const assignableTeamLeads = assignableUsers.filter(t => t.role === 'TEAM_LEAD');
+  const assignableTechnicians = assignableUsers.filter(t => t.role === 'TECHNICIAN');
 
   const doAssign = async () => {
     if (!assignTech) return;
     setAssigning(true);
     try {
-      const payload = isAdminUser
-          ? { teamLeadId: Number(assignTech), priority: assignPri, notes: assignNotes, notifyTechnician: true, notifyCustomer: true }
-          : { technicianId: Number(assignTech), priority: assignPri, notes: assignNotes, notifyTechnician: true, notifyCustomer: true };
+      // technicianId accepts either a Team Lead or a Technician user id — the
+      // backend keys the assignment off the target user's actual role.
+      const payload = { technicianId: Number(assignTech), priority: assignPri, notes: assignNotes, notifyTechnician: true, notifyCustomer: true };
       await post(`/api/faults/${fault.id}/assign`, payload);
       onSuccess('Fault assigned successfully', 'success');
       onClose();
@@ -383,9 +386,7 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
     if (!reassignTech || !reassignReason.trim()) return;
     setReassigning(true);
     try {
-      const payload = isAdminUser
-          ? { newTeamLeadId: Number(reassignTech), reason: reassignReason, notifyTechnician: true, notifyPreviousTechnician: true }
-          : { newTechnicianId: Number(reassignTech), reason: reassignReason, notifyTechnician: true, notifyPreviousTechnician: true };
+      const payload = { newTechnicianId: Number(reassignTech), reason: reassignReason, notifyTechnician: true, notifyPreviousTechnician: true };
       await post(`/api/faults/${fault.id}/reassign`, payload);
       onSuccess('Fault reassigned', 'success');
       onClose();
@@ -673,17 +674,34 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
                   color:C.muted, lineHeight:1.6,
                 }}>
                   ℹ️ {isAdminUser
-                      ? 'Assign this fault to a Team Lead. They will receive a push notification.'
+                      ? 'Assign this fault to a Team Lead, or directly to a Technician. Either way, they will receive a push notification — a direct Technician assignment also creates their job automatically.'
                       : 'Assign this fault to a technician in your group. They will receive a push notification and a new job will be created automatically.'}
                 </div>
                 <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
                   <div>
                     <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
-                      {isAdminUser ? 'TEAM LEAD *' : 'TECHNICIAN *'}
+                      {isAdminUser ? 'ASSIGN TO *' : 'TECHNICIAN *'}
                     </label>
                     <Select value={assignTech} onChange={setAssignTech} style={{ width:'100%' }}>
-                      <option value="">— Select {isAdminUser ? 'team lead' : 'technician'} —</option>
-                      {assignableUsers.map(t => (
+                      <option value="">— Select {isAdminUser ? 'team lead or technician' : 'technician'} —</option>
+                      {isAdminUser ? (
+                          <>
+                            <optgroup label="Team Leads">
+                              {assignableTeamLeads.map(t => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.fullName} {t.phone ? `(${t.phone})` : ''}
+                                  </option>
+                              ))}
+                            </optgroup>
+                            <optgroup label="Technicians">
+                              {assignableTechnicians.map(t => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.fullName} {t.phone ? `(${t.phone})` : ''}
+                                  </option>
+                              ))}
+                            </optgroup>
+                          </>
+                      ) : assignableUsers.map(t => (
                           <option key={t.id} value={t.id}>
                             {t.fullName} {t.phone ? `(${t.phone})` : ''}
                           </option>
@@ -746,11 +764,32 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
                 <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
                   <div>
                     <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
-                      {isAdminUser ? 'NEW TEAM LEAD *' : 'NEW TECHNICIAN *'}
+                      {isAdminUser ? 'NEW ASSIGNEE *' : 'NEW TECHNICIAN *'}
                     </label>
                     <Select value={reassignTech} onChange={setReassignTech} style={{ width:'100%' }}>
-                      <option value="">— Select new {isAdminUser ? 'team lead' : 'technician'} —</option>
-                      {assignableUsers
+                      <option value="">— Select new {isAdminUser ? 'team lead or technician' : 'technician'} —</option>
+                      {isAdminUser ? (
+                          <>
+                            <optgroup label="Team Leads">
+                              {assignableTeamLeads
+                                  .filter(t => t.id !== fault.assignedTo?.id)
+                                  .map(t => (
+                                      <option key={t.id} value={t.id}>
+                                        {t.fullName} {t.phone ? `(${t.phone})` : ''}
+                                      </option>
+                                  ))}
+                            </optgroup>
+                            <optgroup label="Technicians">
+                              {assignableTechnicians
+                                  .filter(t => t.id !== fault.assignedTo?.id)
+                                  .map(t => (
+                                      <option key={t.id} value={t.id}>
+                                        {t.fullName} {t.phone ? `(${t.phone})` : ''}
+                                      </option>
+                                  ))}
+                            </optgroup>
+                          </>
+                      ) : assignableUsers
                           .filter(t => t.id !== fault.assignedTo?.id)
                           .map(t => (
                               <option key={t.id} value={t.id}>
