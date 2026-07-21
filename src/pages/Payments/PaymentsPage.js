@@ -41,9 +41,11 @@ const P = {
 
 // ─── Status config ─────────────────────────────────────────────────────────────
 const STATUS_CFG = {
-  DRAFT:       { label: 'Pending Review', bg: P.goldL,    color: P.gold,    dot: P.gold    },
-  FINAL:       { label: 'Final / Billed', bg: P.emeraldL, color: P.emerald, dot: P.emerald },
-  NOT_APPROVED:{ label: 'Not Approved',   bg: P.roseL,    color: P.rose,    dot: P.rose    },
+  DRAFT:                 { label: 'Pending Review',  bg: P.goldL,    color: P.gold,    dot: P.gold    },
+  FINAL:                 { label: 'Final / Billed',  bg: P.emeraldL, color: P.emerald, dot: P.emerald },
+  NOT_APPROVED:          { label: 'Not Approved',    bg: P.roseL,    color: P.rose,    dot: P.rose    },
+  DISPUTED:              { label: 'Disputed',        bg: P.amberL,   color: P.amber,   dot: P.amber   },
+  PENDING_CLIENT_REVIEW: { label: 'Awaiting Client', bg: P.skyL,     color: P.sky,     dot: P.sky     },
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -1126,6 +1128,437 @@ function HistoryTab({ onToast }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// DISPUTE REVIEW PANEL — right side detail view for the Bill Dispute queue
+// (SRS 5.5.2.1 / FR-32). Mirrors ReviewPanel's structure + adjust-mode form.
+// ═══════════════════════════════════════════════════════════════════════════════
+function DisputePanel({ payment, onAmend, onClose }) {
+  const [foc,           setFoc]           = useState('');
+  const [chargeable,    setChargeable]    = useState('');
+  const [labour,        setLabour]        = useState('');
+  const [justification, setJustification] = useState('');
+  const [mode,          setMode]          = useState(null); // null | 'amend'
+  const [loading,       setLoading]       = useState(false);
+
+  // Prefill the three adjustable line items with the bill's current values,
+  // mirroring ReviewPanel's adjust-mode which seeds adjustedAmt from the current value.
+  useEffect(() => {
+    if (payment) {
+      setFoc(payment.materialsFocTotal ?? '');
+      setChargeable(payment.materialsChargeableTotal ?? '');
+      setLabour(payment.labourCharge ?? '');
+      setJustification('');
+      setMode(null);
+    }
+  }, [payment?.id]);
+
+  // Photos are served from the backend's static /uploads/** route, not the /api host.
+  const resolvePhotoUrl = (p) => {
+    const path = typeof p === 'string' ? p : (p?.url || p?.path || '');
+    if (!path) return '';
+    return /^https?:\/\//i.test(path) ? path : `${API}${path.startsWith('/') ? '' : '/'}${path}`;
+  };
+
+  if (!payment) return (
+      <div style={{
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        height: '100%', color: P.muted, gap: 12,
+      }}>
+        <div style={{ fontSize: 52 }}>⚖️</div>
+        <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'Playfair Display, serif' }}>
+          Select a dispute to review
+        </div>
+        <div style={{ fontSize: 12 }}>Click any disputed bill from the left panel</div>
+      </div>
+  );
+
+  const handleAmend = async () => {
+    if (!justification.trim()) return;
+    setLoading(true);
+    try {
+      const patch = (p, b) =>
+        fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:8080'}${p}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('accessToken')}` },
+          body: JSON.stringify(b),
+        }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); });
+      await patch(`/api/payments/${payment.id}/amend`, {
+        materialsFocTotal:        foc        !== '' ? Number(foc)        : null,
+        materialsChargeableTotal: chargeable !== '' ? Number(chargeable) : null,
+        labourCharge:             labour     !== '' ? Number(labour)     : null,
+        justification,
+      });
+      onAmend('Bill amended and resent to client', 'success');
+    } catch { onAmend('Amendment failed', 'error'); }
+    finally { setLoading(false); }
+  };
+
+  const focAmt        = Number(payment.materialsFocTotal)        || 0;
+  const chargeableAmt = Number(payment.materialsChargeableTotal) || 0;
+  const labourAmt     = Number(payment.labourCharge)            || 0;
+  const totalAmt      = Number(payment.totalAmount)             || 0;
+  const photo         = payment.disputePhotoUrl;
+
+  return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+
+        {/* Header */}
+        <div style={{
+          padding: '20px 24px 16px',
+          borderBottom: `1px solid ${P.border}`,
+          flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                <span style={{
+                  fontSize: 13, fontWeight: 800, color: P.gold,
+                  fontFamily: 'IBM Plex Mono, monospace',
+                }}>
+                  #{payment.id}
+                </span>
+                <StatusPill status={payment.status} />
+              </div>
+              <div style={{ fontSize: 11, color: P.muted }}>
+                Disputed {timeAgo(payment.disputedAt || payment.updatedAt)}
+              </div>
+            </div>
+            <button
+                onClick={onClose}
+                style={{
+                  background: 'none', border: 'none', color: P.muted,
+                  fontSize: 20, cursor: 'pointer', padding: '0 4px', lineHeight: 1,
+                }}
+                onMouseEnter={e => e.target.style.color = P.text}
+                onMouseLeave={e => e.target.style.color = P.muted}
+            >×</button>
+          </div>
+
+          {/* Submitter */}
+          {payment.teamLeadName && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '10px 12px', borderRadius: 8,
+                background: P.surface, border: `1px solid ${P.border}`,
+                marginTop: 12,
+              }}>
+                <Avatar name={payment.teamLeadName} size={34} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: P.text }}>
+                    {payment.teamLeadName}
+                  </div>
+                  <div style={{ fontSize: 11, color: P.muted }}>
+                    Team Lead · Job #{payment.jobNumber || payment.jobId}
+                  </div>
+                </div>
+                {payment.faultNumber && (
+                    <div style={{
+                      marginLeft: 'auto', padding: '4px 10px',
+                      borderRadius: 6, background: P.skyL,
+                      border: `1px solid ${P.sky}44`,
+                      fontSize: 11, color: P.sky, fontWeight: 700,
+                    }}>
+                      Fault #{payment.faultNumber}
+                    </div>
+                )}
+              </div>
+          )}
+        </div>
+
+        {/* Scrollable body */}
+        <div style={{ overflowY: 'auto', flex: 1, padding: '20px 24px' }}>
+
+          {/* Client's reported issue */}
+          <SectionLabel>Client's Reported Issue</SectionLabel>
+          <div style={{
+            padding: '12px 14px', borderRadius: 8,
+            background: P.amberL, border: `1px solid ${P.amber}44`,
+            marginBottom: 20,
+          }}>
+            {payment.disputeCategory && (
+                <div style={{
+                  display: 'inline-block', marginBottom: payment.disputeDescription ? 8 : 0,
+                  padding: '3px 10px', borderRadius: 6,
+                  background: P.amber + '22', color: P.amber,
+                  fontSize: 11, fontWeight: 800, letterSpacing: 0.3,
+                }}>
+                  {payment.disputeCategory}
+                </div>
+            )}
+            {payment.disputeDescription && (
+                <div style={{ fontSize: 13, color: P.text, lineHeight: 1.6, fontStyle: 'italic' }}>
+                  "{payment.disputeDescription}"
+                </div>
+            )}
+            {!payment.disputeCategory && !payment.disputeDescription && (
+                <div style={{ fontSize: 12, color: P.muted }}>No details provided by the client.</div>
+            )}
+          </div>
+
+          {/* Photo evidence */}
+          {photo && (
+              <>
+                <SectionLabel>Photo Evidence</SectionLabel>
+                <div style={{
+                  width: '100%', height: 200, borderRadius: 10, overflow: 'hidden',
+                  background: P.surface, border: `1px solid ${P.border}`,
+                  marginBottom: 20,
+                }}>
+                  <img
+                      src={resolvePhotoUrl(photo)}
+                      alt="Dispute evidence"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      onError={e => { e.target.style.display = 'none'; }}
+                  />
+                </div>
+              </>
+          )}
+
+          {/* Original bill breakdown */}
+          <SectionLabel>Original Bill Breakdown</SectionLabel>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+            <AmountChip label="Materials FOC"        value={focAmt}        color={P.emerald} />
+            <AmountChip label="Materials Chargeable" value={chargeableAmt} color={P.gold} />
+            <AmountChip label="Labour"               value={labourAmt}     color={P.text} />
+            <AmountChip label="Total"                value={totalAmt}      color={P.text} large />
+          </div>
+
+          {/* Amendment history hint */}
+          {payment.amendmentJustification && (
+              <>
+                <SectionLabel>Last Amendment Justification</SectionLabel>
+                <div style={{
+                  padding: '12px 14px', borderRadius: 8,
+                  background: P.surface, border: `1px solid ${P.border}`,
+                  fontSize: 12, color: P.muted, lineHeight: 1.6,
+                  fontStyle: 'italic', marginBottom: 20,
+                }}>
+                  "{payment.amendmentJustification}"
+                  {payment.amendedByName && (
+                      <div style={{ marginTop: 6, fontStyle: 'normal', fontSize: 11, color: P.dim }}>
+                        — {payment.amendedByName}{payment.amendedAt ? ` · ${fmtDT(payment.amendedAt)}` : ''}
+                      </div>
+                  )}
+                </div>
+              </>
+          )}
+        </div>
+
+        {/* Action footer — amend & resend */}
+        <div style={{
+          padding: '16px 24px',
+          borderTop: `1px solid ${P.border}`,
+          background: P.panel,
+          flexShrink: 0,
+        }}>
+          {!mode && (
+              <Btn variant="amber" onClick={() => setMode('amend')} full>
+                ✏️ Amend Bill & Resend to Client
+              </Btn>
+          )}
+
+          {mode === 'amend' && (
+              <div>
+                <div style={{
+                  padding: '10px 12px', borderRadius: 8,
+                  background: P.amberL, border: `1px solid ${P.amber}44`,
+                  fontSize: 12, color: P.amber, marginBottom: 12,
+                }}>
+                  ✏️ Adjust the line items, then resend the amended bill to the client
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: P.muted, fontWeight: 800, marginBottom: 5, letterSpacing: 0.6 }}>
+                      MATERIALS FOC (LKR)
+                    </div>
+                    <Input type="number" value={foc} onChange={setFoc} placeholder="0.00" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: P.muted, fontWeight: 800, marginBottom: 5, letterSpacing: 0.6 }}>
+                      MATERIALS CHARGEABLE (LKR)
+                    </div>
+                    <Input type="number" value={chargeable} onChange={setChargeable} placeholder="0.00" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: P.muted, fontWeight: 800, marginBottom: 5, letterSpacing: 0.6 }}>
+                      LABOUR CHARGE (LKR)
+                    </div>
+                    <Input type="number" value={labour} onChange={setLabour} placeholder="0.00" />
+                  </div>
+                </div>
+                <div style={{
+                  fontSize: 11, color: P.muted, marginBottom: 10,
+                }}>
+                  New total (chargeable + labour):{' '}
+                  <span style={{ color: P.gold, fontWeight: 800 }}>
+                    {fmtLKR((Number(chargeable) || 0) + (Number(labour) || 0))}
+                  </span>
+                </div>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: P.muted, fontWeight: 800, marginBottom: 5, letterSpacing: 0.6 }}>
+                    JUSTIFICATION *
+                  </div>
+                  <Textarea
+                      value={justification} onChange={setJustification}
+                      placeholder="Explain the amendment for the client and the audit trail…"
+                      rows={2}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Btn variant="ghost" onClick={() => setMode(null)} sx={{ flex: 0 }}>← Back</Btn>
+                  <Btn
+                      variant="amber"
+                      onClick={handleAmend}
+                      disabled={loading || !justification.trim()}
+                      sx={{ flex: 1 }}
+                  >
+                    {loading ? '⏳ Processing…' : '📤 Resend to Client'}
+                  </Btn>
+                </div>
+              </div>
+          )}
+        </div>
+      </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DISPUTE QUEUE TAB — dedicated queue for Client-reported disputes (SRS 5.5.2.1)
+// Live filter over /api/payments/all → status === 'DISPUTED' (mirrors HistoryTab's
+// client-side filtering; no dedicated backend list endpoint).
+// ═══════════════════════════════════════════════════════════════════════════════
+function DisputesTab({ onToast }) {
+  const [disputes, setDisputes] = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [search,   setSearch]   = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await get('/api/payments/all');
+      const list = (Array.isArray(d) ? d : d?.content || [])
+          .filter(p => p.status === 'DISPUTED');
+      setDisputes(list);
+      setSelected(prev => list.find(p => p.id === prev?.id) || null);
+    } catch (e) {
+      console.error(e);
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = disputes.filter(p => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return String(p.id).includes(q) ||
+        p.teamLeadName?.toLowerCase().includes(q) ||
+        p.paymentNumber?.toLowerCase().includes(q);
+  });
+
+  // After amend: re-fetch (the amended bill is now PENDING_CLIENT_REVIEW and drops
+  // out of the DISPUTED filter) and advance to the next remaining dispute.
+  const handleAmend = useCallback((msg, type) => {
+    onToast(msg, type);
+    load().then(() => {
+      setSelected(prev => {
+        const next = disputes.find(p => p.id !== prev?.id && p.status === 'DISPUTED');
+        return next || null;
+      });
+    });
+  }, [load, disputes, onToast]);
+
+  return (
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+
+        {/* Left panel — dispute queue */}
+        <div style={{
+          width: 360, flexShrink: 0,
+          borderRight: `1px solid ${P.border}`,
+          display: 'flex', flexDirection: 'column',
+          background: P.panel, overflow: 'hidden',
+        }}>
+          <div style={{ padding: '14px 16px', borderBottom: `1px solid ${P.border}`, flexShrink: 0 }}>
+            <div style={{ position: 'relative' }}>
+              <span style={{
+                position: 'absolute', left: 9, top: '50%',
+                transform: 'translateY(-50%)', color: P.muted, fontSize: 13,
+              }}>🔍</span>
+              <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search by ID or name…"
+                  style={{
+                    width: '100%', background: P.surface,
+                    border: `1.5px solid ${P.border}`, borderRadius: 8,
+                    padding: '7px 10px 7px 28px', color: P.text, fontSize: 11,
+                    outline: 'none', fontFamily: 'IBM Plex Mono, monospace',
+                  }}
+                  onFocus={e => e.target.style.borderColor = P.gold}
+                  onBlur={e => e.target.style.borderColor = P.border}
+              />
+            </div>
+          </div>
+
+          {/* Queue list */}
+          <div style={{ overflowY: 'auto', flex: 1 }}>
+            {loading ? (
+                <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {[...Array(4)].map((_, i) => (
+                      <div key={i} style={{
+                        padding: 14, background: P.surface, borderRadius: 10,
+                        border: `1px solid ${P.border}`,
+                      }}>
+                        <Skeleton h={12} w="60%" mb={8} />
+                        <Skeleton h={18} w="45%" mb={6} />
+                        <Skeleton h={10} w="80%" />
+                      </div>
+                  ))}
+                </div>
+            ) : filtered.length === 0 ? (
+                <div style={{ padding: 40, textAlign: 'center', color: P.muted, fontSize: 13 }}>
+                  <div style={{ fontSize: 40, marginBottom: 10 }}>⚖️</div>
+                  <div style={{ fontWeight: 700, fontFamily: 'Playfair Display, serif' }}>
+                    No Disputes
+                  </div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>
+                    No bills are currently disputed
+                  </div>
+                </div>
+            ) : (
+                filtered.map((p, i) => (
+                    <div key={p.id || i} style={{ animation: `pay-fadein 0.25s ease ${i * 0.04}s both` }}>
+                      <PaymentListItem
+                          payment={p}
+                          selected={selected?.id === p.id}
+                          onClick={() => setSelected(p)}
+                      />
+                    </div>
+                ))
+            )}
+          </div>
+
+          <div style={{
+            padding: '10px 16px', borderTop: `1px solid ${P.border}`,
+            fontSize: 11, color: P.muted, flexShrink: 0,
+          }}>
+            {filtered.length} dispute{filtered.length !== 1 ? 's' : ''} in queue
+          </div>
+        </div>
+
+        {/* Right panel — dispute detail + amendment form */}
+        <div style={{ flex: 1, background: P.panel, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <DisputePanel
+              payment={selected}
+              onAmend={handleAmend}
+              onClose={() => setSelected(null)}
+          />
+        </div>
+      </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function PaymentsPage() {
@@ -1247,8 +1680,9 @@ export default function PaymentsPage() {
           {/* Tabs */}
           <div style={{ display: 'flex', gap: 0 }}>
             {[
-              { id: 'pending', label: `⏳ Pending Review (${pendingCount})` },
-              { id: 'history', label: '📋 Payment History' },
+              { id: 'pending',  label: `⏳ Pending Review (${pendingCount})` },
+              { id: 'disputes', label: '⚖️ Bill Disputes' },
+              { id: 'history',  label: '📋 Payment History' },
             ].map(t => (
                 <button key={t.id} onClick={() => setTab(t.id)} style={{
                   padding: '10px 20px', border: 'none', cursor: 'pointer',
@@ -1269,6 +1703,8 @@ export default function PaymentsPage() {
             <div style={{ padding: '24px 28px', flex: 1, overflowY: 'auto' }}>
               <HistoryTab onToast={showToast} />
             </div>
+        ) : tab === 'disputes' ? (
+            <DisputesTab onToast={showToast} />
         ) : (
             /* ── Split panel layout ──────────────────────────────────────── */
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
