@@ -56,7 +56,7 @@ const PRIORITY = {
   LOW:    { label:'LOW',    bg:'#1C2D1C', color:'#56D364', border:'#56D36455' },
 };
 
-const CATEGORIES = ['INTERNET','PHONE','TV','OTHER'];
+const CATEGORIES = ['INTERNET','PHONE','TV','FIBER','OTHER'];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const fmt = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—';
@@ -308,6 +308,9 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
   const [noteText,    setNoteText]    = useState('');
   const [isInternal,  setIsInternal]  = useState(false);
   const [posting,     setPosting]     = useState(false);
+  const [photos,      setPhotos]      = useState([]);
+  const [photosLoading, setPhotosLoading] = useState(false);
+  const [lightbox,    setLightbox]    = useState(null);
 
   // Assign form
   const [assignTech,    setAssignTech]    = useState('');
@@ -327,7 +330,7 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
   useEffect(() => {
     if (!fault || !open) return;
     setTab('timeline');
-    setTimeline([]); setNotes([]);
+    setTimeline([]); setNotes([]); setPhotos([]);
   }, [fault?.id, open]);
 
   useEffect(() => {
@@ -344,7 +347,25 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
           .then(d => setNotes(Array.isArray(d) ? d : []))
           .catch(() => {});
     }
+    if (tab === 'photos') {
+      setPhotosLoading(true);
+      // FaultDTO.photoUrls is a comma-separated string (see FaultService.joinPhotoUrls), not an array.
+      const toList = (v) => (v || '').split(',').map(s => s.trim()).filter(Boolean);
+      get(`/api/faults/${fault.id}`)
+          .then(d => setPhotos(toList(d?.photoUrls)))
+          .catch(() => setPhotos(toList(fault.photoUrls)))
+          .finally(() => setPhotosLoading(false));
+    }
   }, [fault?.id, tab, open]);
+
+  // Photos are served from the backend's static /uploads/** route, not the /api host —
+  // resolve relative paths against the API's origin, not its /api base path.
+  const photoUrl = (p) => {
+    const path = typeof p === 'string' ? p : (p?.url || p?.path || '');
+    if (!path) return '';
+    if (/^https?:\/\//i.test(path)) return path;
+    return `${API}${path.startsWith('/') ? '' : '/'}${path}`;
+  };
 
   const submitNote = async () => {
     if (!noteText.trim()) return;
@@ -411,6 +432,7 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
 
   const TABS = [
     { id:'timeline', label:'🕐 Timeline' },
+    { id:'photos',   label:'📷 Photos' },
     { id:'notes',    label:'💬 Notes' },
     { id:'assign',   label:'🔧 Assign' },
     { id:'reassign', label:'🔄 Reassign' },
@@ -579,6 +601,57 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
                             </div>
                         );
                       })}
+                    </div>
+                )}
+              </div>
+          )}
+
+          {/* PHOTOS */}
+          {tab === 'photos' && (
+              <div>
+                {photosLoading ? (
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10 }}>
+                      {[...Array(3)].map((_, i) => <Skeleton key={i} h={110} r={10} />)}
+                    </div>
+                ) : photos.length === 0 ? (
+                    <div style={{ textAlign:'center', padding:40, color:C.muted, fontSize:13 }}>
+                      No photos attached to this fault
+                    </div>
+                ) : (
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10 }}>
+                      {photos.map((p, i) => (
+                          <div
+                              key={i}
+                              onClick={() => setLightbox(photoUrl(p))}
+                              style={{
+                                height:110, borderRadius:10, overflow:'hidden',
+                                border:`1px solid ${C.border}`, cursor:'pointer',
+                                background:C.surface2,
+                              }}
+                          >
+                            <img
+                                src={photoUrl(p)}
+                                alt={`Fault photo ${i+1}`}
+                                style={{ width:'100%', height:'100%', objectFit:'cover' }}
+                            />
+                          </div>
+                      ))}
+                    </div>
+                )}
+                {lightbox && (
+                    <div
+                        onClick={() => setLightbox(null)}
+                        style={{
+                          position:'fixed', inset:0, zIndex:1100,
+                          background:'rgba(1,4,9,0.92)',
+                          display:'flex', alignItems:'center', justifyContent:'center',
+                          cursor:'zoom-out', padding:32,
+                        }}
+                    >
+                      <img
+                          src={lightbox} alt="Fault photo full size"
+                          style={{ maxWidth:'100%', maxHeight:'100%', borderRadius:8 }}
+                      />
                     </div>
                 )}
               </div>
