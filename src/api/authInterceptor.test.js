@@ -133,4 +133,71 @@ describe('axios auth interceptor', () => {
     // The retry must carry the NEW token, otherwise the refresh accomplished nothing.
     expect(localStorage.getItem('accessToken')).toBe('fresh-access-token');
   });
+
+  /**
+   * AUTH-013 concurrency guard — several requests 401ing at once must share ONE refresh call,
+   * not each fire their own against what becomes an already-rotated token. Three different
+   * endpoints are fired concurrently (not the same URL three times) so this can't accidentally
+   * pass via some per-URL de-duplication; the guard has to be global across the whole client.
+   */
+  it('concurrentRequests_shareOneRefreshCall', async () => {
+    const USERS_URL = '/users';
+    const PAYMENTS_URL = '/payments';
+    const urls = [FAULTS_URL, USERS_URL, PAYMENTS_URL];
+
+    api.defaults.adapter = jest.fn(config => {
+      calls.push(`${(config.method || 'get').toUpperCase()} ${config.url}`);
+
+      if (config.url === REFRESH_URL) {
+        return ok(config, {
+          accessToken: 'fresh-access-token',
+          refreshToken: 'fresh-refresh-token',
+        });
+      }
+
+      if (urls.includes(config.url)) {
+        const callCountForThisUrl = calls.filter(c => c.endsWith(config.url)).length;
+        if (callCountForThisUrl === 1) {
+          return Promise.reject(httpError(401, config, {message: 'JWT expired'}));
+        }
+        return ok(config, {url: config.url});
+      }
+
+      return Promise.reject(httpError(404, config));
+    });
+
+    // Fire all three concurrently — every one of them hits the 401 branch of the interceptor
+    // before any refresh has resolved, so the guard is actually exercised under real overlap,
+    // not just three sequential awaits that happen to look concurrent.
+    const results = await Promise.allSettled([
+      api.get(FAULTS_URL),
+      api.get(USERS_URL),
+      api.get(PAYMENTS_URL),
+    ]);
+
+    const refreshCalls = calls.filter(c => c.endsWith(REFRESH_URL));
+
+    // Exactly one refresh call fired, no matter how many requests 401'd at once.
+    expect(refreshCalls).toHaveLength(1);
+
+    // Every one of the three requests resolved (retried successfully), none was forced into
+    // forceLogout() by arriving against an already-rotated/consumed refresh token.
+    expect(results.map(r => r.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled']);
+    results.forEach((r, i) => {
+      expect(r.value.status).toBe(200);
+      expect(r.value.data).toEqual({url: urls[i]});
+    });
+
+    // Each original endpoint was called exactly twice — the initial 401 plus one retry, not
+    // more (which would suggest a second refresh cycle) and not fewer (which would suggest a
+    // request never got replayed).
+    urls.forEach(url => {
+      expect(calls.filter(c => c.endsWith(url))).toHaveLength(2);
+    });
+
+    // forceLogout() never ran — it clears refreshToken from localStorage and navigates away.
+    expect(localStorage.getItem('refreshToken')).toBe('fresh-refresh-token');
+    expect(localStorage.getItem('accessToken')).toBe('fresh-access-token');
+    expect(window.location.href).toBe('/dashboard');
+  });
 });
