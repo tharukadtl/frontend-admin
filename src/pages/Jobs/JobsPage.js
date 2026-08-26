@@ -87,13 +87,33 @@ function JobModal({job,technicians,open,onClose,onSaved}) {
   const allowed=NEXT[job.status]||[];
   const changed=status!==job.status||(techId&&techId!==String(job.assignedTo?.id||''));
 
+  // Job has no opmcId/workgroupId of its own — resolve it via its Team Lead
+  // (technicians already includes TEAM_LEAD-role users, so the job's own
+  // dispatching Team Lead should be findable in the same list). This mirrors
+  // JobService.reassignJob's real enforcement boundary as closely as static
+  // org data allows: same OPMC AND same Work Group as the job's Team Lead.
+  // NOTE (not fully closable client-side): the backend's actual guard is
+  // narrower still — DaySessionMemberRepository.findActiveMemberForTeamLeadToday
+  // requires the technician to be a checked-in member of THIS team lead's
+  // *today's active day-session*, not just a static Work Group assignment.
+  // A technician can match OPMC+Work Group here and still be rejected server-
+  // side if they simply haven't checked in today (or checked into a different
+  // team lead's session) — that dynamic, per-day membership has no list
+  // endpoint to query from the admin portal today. This filter removes the
+  // clearly-wrong-org options; it cannot guarantee zero-failure the way a
+  // real active-session-membership endpoint would.
+  const jobTeamLead=technicians.find(t=>String(t.id)===String(job.teamLeadId));
+  const eligibleTechnicians=jobTeamLead
+      ? technicians.filter(t=>t.opmcId===jobTeamLead.opmcId&&t.workgroupId===jobTeamLead.workgroupId)
+      : technicians; // Team Lead not resolvable (e.g. missing/deactivated) — fall back to the full list rather than trap the Admin with zero options.
+
   const save=async()=>{
     setSaving(true);
     try{
       if(status!==job.status) await patch(`/api/jobs/${job.id}/status`,{status,notes}).catch(()=>post(`/api/jobs/${job.id}/update`,{status,notes}));
-      if(techId&&techId!==String(job.assignedTo?.id||'')&&job.faultId) await post(`/api/faults/${job.faultId}/assign`,{technicianId:Number(techId),priority:job.priority,notes,notifyTechnician:true,notifyCustomer:true}).catch(()=>{});
+      if(techId&&techId!==String(job.assignedTo?.id||'')) await post(`/api/jobs/${job.id}/reassign`,{newTechnicianId:Number(techId)});
       onSaved('Job updated','success');onClose();
-    }catch{onSaved('Update failed','error');}finally{setSaving(false);}
+    }catch(e){onSaved(`Update failed${e?.message?` (${e.message})`:''}`,'error');}finally{setSaving(false);}
   };
 
   const meta=[
@@ -133,7 +153,7 @@ function JobModal({job,technicians,open,onClose,onSaved}) {
               <div style={{fontSize:10,color:J.muted,fontWeight:700,letterSpacing:0.5,marginBottom:5}}>ASSIGN TECHNICIAN</div>
               <select value={techId} onChange={e=>setTechId(e.target.value)} style={{width:'100%',background:J.s2,border:`1.5px solid ${J.border}`,borderRadius:8,padding:'8px 12px',fontSize:12,color:J.text,outline:'none',cursor:'pointer'}} onFocus={e=>e.target.style.borderColor=J.teal} onBlur={e=>e.target.style.borderColor=J.border}>
                 <option value="">— Keep current —</option>
-                {technicians.map(t=><option key={t.id} value={t.id}>{t.fullName} {t.phone?`(${t.phone})`:''}</option>)}
+                {eligibleTechnicians.map(t=><option key={t.id} value={t.id}>{t.fullName} {t.phone?`(${t.phone})`:''}</option>)}
               </select>
             </div>
             <div>
