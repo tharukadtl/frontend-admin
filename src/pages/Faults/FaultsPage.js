@@ -16,8 +16,9 @@ const req   = (method, path, body) =>
       if (!r.ok) throw new Error(`${r.status}`);
       return r.json();
     });
-const get  = path       => req('GET',  path);
-const post = (path, b)  => req('POST', path, b);
+const get   = path       => req('GET',   path);
+const post  = (path, b)  => req('POST',  path, b);
+const patch = (path, b)  => req('PATCH', path, b);
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {
@@ -77,7 +78,7 @@ const exportCSV = (faults) => {
     f.id, f.status, f.priority, f.category,
     f.reportedBy?.fullName || '—',
     f.address || '—',
-    f.assignedTo?.fullName || 'Unassigned',
+    f.assignedTo?.fullName || (f.workGroupName ? `${f.workGroupName} (unclaimed)` : 'Unassigned'),
     fmt(f.createdAt), fmt(f.updatedAt),
   ]);
   const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
@@ -300,7 +301,7 @@ const Toast = ({ msg, type, onDone }) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // DETAIL MODAL — Timeline, Notes, Assign, Reassign, Escalate
 // ═══════════════════════════════════════════════════════════════════════════════
-function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSuccess }) {
+function FaultDetailModal({ fault, workGroups, currentUser, open, onClose, onSuccess }) {
   const [tab,         setTab]         = useState('timeline');
   const [timeline,    setTimeline]    = useState([]);
   const [notes,       setNotes]       = useState([]);
@@ -312,14 +313,14 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
   const [photosLoading, setPhotosLoading] = useState(false);
   const [lightbox,    setLightbox]    = useState(null);
 
-  // Assign form
-  const [assignTech,    setAssignTech]    = useState('');
-  const [assignPri,     setAssignPri]     = useState('MEDIUM');
-  const [assignNotes,   setAssignNotes]   = useState('');
-  const [assigning,     setAssigning]     = useState(false);
+  // Assign form (Work Group — SRS 5.5.1)
+  const [assignWg,       setAssignWg]      = useState('');
+  const [assignPri,      setAssignPri]     = useState('MEDIUM');
+  const [assignNotes,    setAssignNotes]   = useState('');
+  const [assigning,      setAssigning]     = useState(false);
 
   // Reassign form
-  const [reassignTech,   setReassignTech]  = useState('');
+  const [reassignWg,     setReassignWg]    = useState('');
   const [reassignReason, setReassignReason]= useState('');
   const [reassigning,    setReassigning]   = useState(false);
 
@@ -327,11 +328,160 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
   const [escalateReason, setEscalateReason]= useState('');
   const [escalating,     setEscalating]    = useState(false);
 
+  // Circuit tab (H1c) — cascading Opmc -> Exchange -> Cab -> Dp -> Circuit picker
+  const [circOpmcs,     setCircOpmcs]     = useState([]);
+  const [circExchanges, setCircExchanges] = useState([]);
+  const [circCabs,      setCircCabs]      = useState([]);
+  const [circDps,       setCircDps]       = useState([]);
+  const [circCircuits,  setCircCircuits]  = useState([]);
+  const [selOpmc,       setSelOpmc]       = useState('');
+  const [selExchange,   setSelExchange]   = useState('');
+  const [selCab,        setSelCab]        = useState('');
+  const [selDp,         setSelDp]         = useState('');
+  const [selCircuit,    setSelCircuit]    = useState('');
+  const [circLoading,   setCircLoading]   = useState({});
+  const [attaching,     setAttaching]     = useState(false);
+
+  // Cause tab (Stage 2) — cascading TypeOfFault -> CauseCategory -> CauseOfFault picker,
+  // Admin/Team-Lead post-hoc classification of the Technician's Stage-1 free-text causeOfFault.
+  const [causeTypes,      setCauseTypes]      = useState([]);
+  const [causeCategories, setCauseCategories] = useState([]);
+  const [causeOfFaults,   setCauseOfFaults]   = useState([]);
+  const [selCauseType,    setSelCauseType]    = useState('');
+  const [selCauseCategory,setSelCauseCategory]= useState('');
+  const [selCauseOfFault, setSelCauseOfFault] = useState('');
+  const [causeLoading,    setCauseLoading]    = useState({});
+  const [attachingCause,  setAttachingCause]  = useState(false);
+
   useEffect(() => {
     if (!fault || !open) return;
     setTab('timeline');
     setTimeline([]); setNotes([]); setPhotos([]);
+    setCircOpmcs([]); setCircExchanges([]); setCircCabs([]); setCircDps([]); setCircCircuits([]);
+    setSelOpmc(''); setSelExchange(''); setSelCab(''); setSelDp(''); setSelCircuit('');
+    setCauseTypes([]); setCauseCategories([]); setCauseOfFaults([]);
+    setSelCauseType(''); setSelCauseCategory(''); setSelCauseOfFault('');
   }, [fault?.id, open]);
+
+  // Cause tab — load TypeOfFaults the first time the tab is opened.
+  useEffect(() => {
+    if (!fault || !open || tab !== 'cause' || causeTypes.length) return;
+    setCauseLoading(p => ({ ...p, type: true }));
+    get('/api/type-of-faults')
+        .then(d => setCauseTypes(Array.isArray(d) ? d : []))
+        .catch(() => {})
+        .finally(() => setCauseLoading(p => ({ ...p, type: false })));
+  }, [fault?.id, open, tab, causeTypes.length]);
+
+  // Cascade: TypeOfFault -> CauseCategory
+  useEffect(() => {
+    setCauseCategories([]); setSelCauseCategory('');
+    setCauseOfFaults([]); setSelCauseOfFault('');
+    if (!selCauseType) return;
+    setCauseLoading(p => ({ ...p, category: true }));
+    get(`/api/cause-categories?typeOfFaultId=${selCauseType}`)
+        .then(d => setCauseCategories(Array.isArray(d) ? d : []))
+        .catch(() => {})
+        .finally(() => setCauseLoading(p => ({ ...p, category: false })));
+  }, [selCauseType]);
+
+  // Cascade: CauseCategory -> CauseOfFault
+  useEffect(() => {
+    setCauseOfFaults([]); setSelCauseOfFault('');
+    if (!selCauseCategory) return;
+    setCauseLoading(p => ({ ...p, cause: true }));
+    get(`/api/cause-of-faults?causeCategoryId=${selCauseCategory}`)
+        .then(d => setCauseOfFaults(Array.isArray(d) ? d : []))
+        .catch(() => {})
+        .finally(() => setCauseLoading(p => ({ ...p, cause: false })));
+  }, [selCauseCategory]);
+
+  const doAttachCause = async () => {
+    if (!selCauseOfFault) return;
+    setAttachingCause(true);
+    try {
+      await patch(`/api/faults/${fault.id}/cause`, { causeId: Number(selCauseOfFault) });
+      onSuccess('Cause classified for fault', 'success');
+      onClose();
+    } catch (e) { onSuccess('Classification failed', 'error'); }
+    finally { setAttachingCause(false); }
+  };
+
+  // Circuit tab — load Opmcs the first time the tab is opened.
+  useEffect(() => {
+    if (!fault || !open || tab !== 'circuit' || circOpmcs.length) return;
+    setCircLoading(p => ({ ...p, opmc: true }));
+    get('/api/opmcs?status=ACTIVE')
+        .then(d => setCircOpmcs(Array.isArray(d) ? d : []))
+        .catch(() => {})
+        .finally(() => setCircLoading(p => ({ ...p, opmc: false })));
+  }, [fault?.id, open, tab, circOpmcs.length]);
+
+  // Cascade: Opmc -> Exchange
+  useEffect(() => {
+    setCircExchanges([]); setSelExchange('');
+    setCircCabs([]); setSelCab('');
+    setCircDps([]); setSelDp('');
+    setCircCircuits([]); setSelCircuit('');
+    if (!selOpmc) return;
+    setCircLoading(p => ({ ...p, exchange: true }));
+    get(`/api/exchanges?opmcId=${selOpmc}`)
+        .then(d => setCircExchanges(Array.isArray(d) ? d : []))
+        .catch(() => {})
+        .finally(() => setCircLoading(p => ({ ...p, exchange: false })));
+  }, [selOpmc]);
+
+  // Cascade: Exchange -> Cab
+  useEffect(() => {
+    setCircCabs([]); setSelCab('');
+    setCircDps([]); setSelDp('');
+    setCircCircuits([]); setSelCircuit('');
+    if (!selExchange) return;
+    setCircLoading(p => ({ ...p, cab: true }));
+    get(`/api/cabs?exchangeId=${selExchange}`)
+        .then(d => setCircCabs(Array.isArray(d) ? d : []))
+        .catch(() => {})
+        .finally(() => setCircLoading(p => ({ ...p, cab: false })));
+  }, [selExchange]);
+
+  // Cascade: Cab -> Dp
+  useEffect(() => {
+    setCircDps([]); setSelDp('');
+    setCircCircuits([]); setSelCircuit('');
+    if (!selCab) return;
+    setCircLoading(p => ({ ...p, dp: true }));
+    get(`/api/dps?cabId=${selCab}`)
+        .then(d => setCircDps(Array.isArray(d) ? d : []))
+        .catch(() => {})
+        .finally(() => setCircLoading(p => ({ ...p, dp: false })));
+  }, [selCab]);
+
+  // Cascade: Dp -> Circuit. DP:Circuit is close to 1:1 in the real data (H1a's master-data
+  // import) — auto-select when there's exactly one, skipping a redundant click in the common case.
+  useEffect(() => {
+    setCircCircuits([]); setSelCircuit('');
+    if (!selDp) return;
+    setCircLoading(p => ({ ...p, circuit: true }));
+    get(`/api/circuits?dpId=${selDp}`)
+        .then(d => {
+          const list = Array.isArray(d) ? d : [];
+          setCircCircuits(list);
+          if (list.length === 1) setSelCircuit(String(list[0].id));
+        })
+        .catch(() => {})
+        .finally(() => setCircLoading(p => ({ ...p, circuit: false })));
+  }, [selDp]);
+
+  const doAttachCircuit = async () => {
+    if (!selCircuit) return;
+    setAttaching(true);
+    try {
+      await patch(`/api/faults/${fault.id}/circuit`, { circuitId: Number(selCircuit) });
+      onSuccess('Circuit attached to fault', 'success');
+      onClose();
+    } catch (e) { onSuccess('Attach failed', 'error'); }
+    finally { setAttaching(false); }
+  };
 
   useEffect(() => {
     if (!fault || !open) return;
@@ -381,35 +531,32 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
   };
 
   const isAdminUser = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
-  // Admin assigns to either a Team Lead or a Technician directly (FR-17, SRS 5.5.1);
-  // team lead assigns to technicians in their own branch
-  const assignableUsers = isAdminUser
-      ? technicians.filter(t => t.role === 'TEAM_LEAD' || t.role === 'TECHNICIAN')
-      : technicians.filter(t => t.role === 'TECHNICIAN' && t.branchId === currentUser?.branchId);
-  const assignableTeamLeads = assignableUsers.filter(t => t.role === 'TEAM_LEAD');
-  const assignableTechnicians = assignableUsers.filter(t => t.role === 'TECHNICIAN');
+  // SRS 5.5.1 (v1.9) — Admin assigns a fault to a Work Group, never directly to a
+  // person; the Work Group's own Team Lead then self-assigns or dispatches to a
+  // Technician from the mobile app. Direct Admin-to-Technician assignment was
+  // retired entirely (Critical #2's original behaviour, now superseded — see
+  // QA_Compliance_Consolidated_Report.md).
+  const activeWorkGroups = (workGroups || []).filter(wg => wg.isActive);
 
   const doAssign = async () => {
-    if (!assignTech) return;
+    if (!assignWg) return;
     setAssigning(true);
     try {
-      // technicianId accepts either a Team Lead or a Technician user id — the
-      // backend keys the assignment off the target user's actual role.
-      const payload = { technicianId: Number(assignTech), priority: assignPri, notes: assignNotes, notifyTechnician: true, notifyCustomer: true };
+      const payload = { workGroupId: Number(assignWg), priority: assignPri, notes: assignNotes, notifyTeamLead: true, notifyCustomer: true };
       await post(`/api/faults/${fault.id}/assign`, payload);
-      onSuccess('Fault assigned successfully', 'success');
+      onSuccess('Fault assigned to Work Group', 'success');
       onClose();
     } catch (e) { onSuccess('Assignment failed', 'error'); }
     finally { setAssigning(false); }
   };
 
   const doReassign = async () => {
-    if (!reassignTech || !reassignReason.trim()) return;
+    if (!reassignWg || !reassignReason.trim()) return;
     setReassigning(true);
     try {
-      const payload = { newTechnicianId: Number(reassignTech), reason: reassignReason, notifyTechnician: true, notifyPreviousTechnician: true };
+      const payload = { newWorkGroupId: Number(reassignWg), reason: reassignReason, notifyTeamLead: true, notifyPreviousTeamLead: true };
       await post(`/api/faults/${fault.id}/reassign`, payload);
-      onSuccess('Fault reassigned', 'success');
+      onSuccess('Fault reassigned to a different Work Group', 'success');
       onClose();
     } catch (e) { onSuccess('Reassignment failed', 'error'); }
     finally { setReassigning(false); }
@@ -437,6 +584,8 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
     { id:'assign',   label:'🔧 Assign' },
     { id:'reassign', label:'🔄 Reassign' },
     { id:'escalate', label:'⚠️ Escalate' },
+    { id:'circuit',  label:'🔗 Circuit' },
+    { id:'cause',    label:'🔍 Cause' },
   ];
 
   const TIMELINE_ICONS = {
@@ -471,15 +620,22 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
           }}>
           {fault.category || 'OTHER'}
         </span>
-          {fault.assignedTo && (
+          {fault.assignedTo ? (
               <div style={{ display:'flex', alignItems:'center', gap:6, marginLeft:'auto' }}>
                 <Avatar name={fault.assignedTo.fullName} size={22} />
                 <span style={{ fontSize:12, color:C.muted }}>
               {fault.assignedTo.fullName}
             </span>
               </div>
+          ) : fault.workGroupName && (
+              <span style={{
+                marginLeft:'auto', fontSize:11, padding:'3px 9px', borderRadius:20,
+                background:'#1C2333', color:C.purple, border:`1px solid ${C.purple}33`,
+              }}>
+              👥 {fault.workGroupName} (unclaimed)
+            </span>
           )}
-          <span style={{ fontSize:11, color:C.muted, marginLeft: fault.assignedTo ? 0 : 'auto' }}>
+          <span style={{ fontSize:11, color:C.muted, marginLeft: (fault.assignedTo || fault.workGroupName) ? 0 : 'auto' }}>
           {fmtTime(fault.createdAt)}
         </span>
         </div>
@@ -741,154 +897,142 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
           {/* ASSIGN */}
           {tab === 'assign' && (
               <div>
-                <div style={{
-                  background:'#1C2333', borderRadius:10, padding:14,
-                  border:`1px solid ${C.accentD}33`, marginBottom:20, fontSize:12,
-                  color:C.muted, lineHeight:1.6,
-                }}>
-                  ℹ️ {isAdminUser
-                      ? 'Assign this fault to a Team Lead, or directly to a Technician. Either way, they will receive a push notification — a direct Technician assignment also creates their job automatically.'
-                      : 'Assign this fault to a technician in your group. They will receive a push notification and a new job will be created automatically.'}
-                </div>
-                <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-                  <div>
-                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
-                      {isAdminUser ? 'ASSIGN TO *' : 'TECHNICIAN *'}
-                    </label>
-                    <Select value={assignTech} onChange={setAssignTech} style={{ width:'100%' }}>
-                      <option value="">— Select {isAdminUser ? 'team lead or technician' : 'technician'} —</option>
-                      {isAdminUser ? (
-                          <>
-                            <optgroup label="Team Leads">
-                              {assignableTeamLeads.map(t => (
-                                  <option key={t.id} value={t.id}>
-                                    {t.fullName} {t.phone ? `(${t.phone})` : ''}
-                                  </option>
-                              ))}
-                            </optgroup>
-                            <optgroup label="Technicians">
-                              {assignableTechnicians.map(t => (
-                                  <option key={t.id} value={t.id}>
-                                    {t.fullName} {t.phone ? `(${t.phone})` : ''}
-                                  </option>
-                              ))}
-                            </optgroup>
-                          </>
-                      ) : assignableUsers.map(t => (
-                          <option key={t.id} value={t.id}>
-                            {t.fullName} {t.phone ? `(${t.phone})` : ''}
-                          </option>
-                      ))}
-                    </Select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
-                      PRIORITY OVERRIDE
-                    </label>
-                    <Select value={assignPri} onChange={setAssignPri} style={{ width:'100%' }}>
-                      <option value="HIGH">HIGH — Critical</option>
-                      <option value="MEDIUM">MEDIUM — Normal</option>
-                      <option value="LOW">LOW — When available</option>
-                    </Select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
-                      NOTES (optional)
-                    </label>
-                    <Input
-                        value={assignNotes}
-                        onChange={setAssignNotes}
-                        placeholder="Assignment notes for the technician…"
-                    />
-                  </div>
-                  <Btn
-                      variant="primary" onClick={doAssign}
-                      disabled={!assignTech || assigning}
-                      style={{ alignSelf:'flex-end', padding:'9px 20px', fontSize:13 }}
-                  >
-                    {assigning ? '⏳ Assigning…' : '🔧 Assign Fault'}
-                  </Btn>
-                </div>
+                {!isAdminUser ? (
+                    <div style={{
+                      background:'#1C2333', borderRadius:10, padding:14,
+                      border:`1px solid ${C.accentD}33`, fontSize:12, color:C.muted, lineHeight:1.6,
+                    }}>
+                      ℹ️ Team Leads self-assign and dispatch faults from their Work Group's queue in
+                      the mobile app, not here. This tab is for OPMC Admins assigning a fault to a
+                      Work Group.
+                    </div>
+                ) : (
+                    <>
+                      <div style={{
+                        background:'#1C2333', borderRadius:10, padding:14,
+                        border:`1px solid ${C.accentD}33`, marginBottom:20, fontSize:12,
+                        color:C.muted, lineHeight:1.6,
+                      }}>
+                        ℹ️ Assign this fault to a Work Group. It lands in that Work Group's incoming
+                        queue — its Team Lead then self-assigns it or dispatches it to one of their
+                        own Technicians from the mobile app.
+                      </div>
+                      <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                        <div>
+                          <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                            WORK GROUP *
+                          </label>
+                          <Select value={assignWg} onChange={setAssignWg} style={{ width:'100%' }}>
+                            <option value="">— Select Work Group —</option>
+                            {activeWorkGroups.map(wg => (
+                                <option key={wg.id} value={wg.id}>
+                                  {wg.name}{wg.teamLeadName ? ` — Team Lead: ${wg.teamLeadName}` : ' — no Team Lead assigned'}
+                                </option>
+                            ))}
+                          </Select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                            PRIORITY OVERRIDE
+                          </label>
+                          <Select value={assignPri} onChange={setAssignPri} style={{ width:'100%' }}>
+                            <option value="HIGH">HIGH — Critical</option>
+                            <option value="MEDIUM">MEDIUM — Normal</option>
+                            <option value="LOW">LOW — When available</option>
+                          </Select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                            NOTES (optional)
+                          </label>
+                          <Input
+                              value={assignNotes}
+                              onChange={setAssignNotes}
+                              placeholder="Assignment notes for the Work Group…"
+                          />
+                        </div>
+                        <Btn
+                            variant="primary" onClick={doAssign}
+                            disabled={!assignWg || assigning}
+                            style={{ alignSelf:'flex-end', padding:'9px 20px', fontSize:13 }}
+                        >
+                          {assigning ? '⏳ Assigning…' : '🔧 Assign to Work Group'}
+                        </Btn>
+                      </div>
+                    </>
+                )}
               </div>
           )}
 
           {/* REASSIGN */}
           {tab === 'reassign' && (
               <div>
-                {fault.assignedTo ? (
+                {!isAdminUser ? (
                     <div style={{
-                      display:'flex', alignItems:'center', gap:10,
-                      background:C.surface2, borderRadius:10, padding:12,
-                      border:`1px solid ${C.border}`, marginBottom:16, fontSize:12,
+                      background:'#1C2333', borderRadius:10, padding:14,
+                      border:`1px solid ${C.accentD}33`, fontSize:12, color:C.muted, lineHeight:1.6,
                     }}>
-                      <span style={{ color:C.muted }}>Currently assigned to:</span>
-                      <Avatar name={fault.assignedTo.fullName} size={22} />
-                      <span style={{ color:C.text, fontWeight:700 }}>{fault.assignedTo.fullName}</span>
+                      ℹ️ Reassigning to a different Work Group is an OPMC Admin action.
                     </div>
                 ) : (
-                    <div style={{
-                      background:'#3D1F1F', borderRadius:10, padding:12,
-                      border:`1px solid ${C.red}33`, marginBottom:16,
-                      fontSize:12, color:C.red,
-                    }}>
-                      ⚠️ This fault is not yet assigned. Use the Assign tab instead.
-                    </div>
+                    <>
+                      {fault.workGroupName ? (
+                          <div style={{
+                            display:'flex', alignItems:'center', gap:10,
+                            background:C.surface2, borderRadius:10, padding:12,
+                            border:`1px solid ${C.border}`, marginBottom:16, fontSize:12,
+                          }}>
+                            <span style={{ color:C.muted }}>Currently assigned to Work Group:</span>
+                            <span style={{ color:C.text, fontWeight:700 }}>👥 {fault.workGroupName}</span>
+                            {fault.assignedTo && (
+                                <span style={{ color:C.muted }}>(claimed by {fault.assignedTo.fullName})</span>
+                            )}
+                          </div>
+                      ) : (
+                          <div style={{
+                            background:'#3D1F1F', borderRadius:10, padding:12,
+                            border:`1px solid ${C.red}33`, marginBottom:16,
+                            fontSize:12, color:C.red,
+                          }}>
+                            ⚠️ This fault is not yet assigned to a Work Group. Use the Assign tab instead.
+                          </div>
+                      )}
+                      <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                        <div>
+                          <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                            NEW WORK GROUP *
+                          </label>
+                          <Select value={reassignWg} onChange={setReassignWg} style={{ width:'100%' }}>
+                            <option value="">— Select new Work Group —</option>
+                            {activeWorkGroups
+                                .filter(wg => wg.id !== fault.workGroupId)
+                                .map(wg => (
+                                    <option key={wg.id} value={wg.id}>
+                                      {wg.name}{wg.teamLeadName ? ` — Team Lead: ${wg.teamLeadName}` : ' — no Team Lead assigned'}
+                                    </option>
+                                ))}
+                          </Select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                            REASON FOR REASSIGNMENT *
+                          </label>
+                          <Input
+                              value={reassignReason}
+                              onChange={setReassignReason}
+                              placeholder="Why is this being reassigned? (required)"
+                          />
+                        </div>
+                        <Btn
+                            variant="warning" onClick={doReassign}
+                            disabled={!reassignWg || !reassignReason.trim() || reassigning}
+                            style={{ alignSelf:'flex-end', padding:'9px 20px', fontSize:13 }}
+                        >
+                          {reassigning ? '⏳ Reassigning…' : '🔄 Reassign to Work Group'}
+                        </Btn>
+                      </div>
+                    </>
                 )}
-                <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-                  <div>
-                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
-                      {isAdminUser ? 'NEW ASSIGNEE *' : 'NEW TECHNICIAN *'}
-                    </label>
-                    <Select value={reassignTech} onChange={setReassignTech} style={{ width:'100%' }}>
-                      <option value="">— Select new {isAdminUser ? 'team lead or technician' : 'technician'} —</option>
-                      {isAdminUser ? (
-                          <>
-                            <optgroup label="Team Leads">
-                              {assignableTeamLeads
-                                  .filter(t => t.id !== fault.assignedTo?.id)
-                                  .map(t => (
-                                      <option key={t.id} value={t.id}>
-                                        {t.fullName} {t.phone ? `(${t.phone})` : ''}
-                                      </option>
-                                  ))}
-                            </optgroup>
-                            <optgroup label="Technicians">
-                              {assignableTechnicians
-                                  .filter(t => t.id !== fault.assignedTo?.id)
-                                  .map(t => (
-                                      <option key={t.id} value={t.id}>
-                                        {t.fullName} {t.phone ? `(${t.phone})` : ''}
-                                      </option>
-                                  ))}
-                            </optgroup>
-                          </>
-                      ) : assignableUsers
-                          .filter(t => t.id !== fault.assignedTo?.id)
-                          .map(t => (
-                              <option key={t.id} value={t.id}>
-                                {t.fullName} {t.phone ? `(${t.phone})` : ''}
-                              </option>
-                          ))}
-                    </Select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
-                      REASON FOR REASSIGNMENT *
-                    </label>
-                    <Input
-                        value={reassignReason}
-                        onChange={setReassignReason}
-                        placeholder="Why is this being reassigned? (required)"
-                    />
-                  </div>
-                  <Btn
-                      variant="warning" onClick={doReassign}
-                      disabled={!reassignTech || !reassignReason.trim() || reassigning}
-                      style={{ alignSelf:'flex-end', padding:'9px 20px', fontSize:13 }}
-                  >
-                    {reassigning ? '⏳ Reassigning…' : '🔄 Reassign Fault'}
-                  </Btn>
-                </div>
               </div>
           )}
 
@@ -942,6 +1086,207 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
                 </div>
               </div>
           )}
+
+          {/* CIRCUIT (H1c) */}
+          {tab === 'circuit' && (
+              <div>
+                <div style={{
+                  background:'#1C2333', borderRadius:10, padding:14,
+                  border:`1px solid ${C.accentD}33`, marginBottom:16, fontSize:12,
+                  color:C.muted, lineHeight:1.6,
+                }}>
+                  ℹ️ Attach the specific Exchange → Cab → DP → Circuit this fault's infrastructure
+                  actually runs through. Pick each level in order — each selection filters the next.
+                </div>
+                {fault.circuitCode && (
+                    <div style={{
+                      display:'flex', alignItems:'center', gap:10,
+                      background:C.surface2, borderRadius:10, padding:12,
+                      border:`1px solid ${C.border}`, marginBottom:16, fontSize:12,
+                    }}>
+                      <span style={{ color:C.muted }}>Currently attached:</span>
+                      <span style={{ color:C.text, fontWeight:700 }}>🔗 Circuit {fault.circuitCode}</span>
+                    </div>
+                )}
+                <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                  <div>
+                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                      OPMC *
+                    </label>
+                    <Select value={selOpmc} onChange={setSelOpmc} style={{ width:'100%' }}>
+                      <option value="">
+                        {circLoading.opmc ? 'Loading…' : '— Select OPMC —'}
+                      </option>
+                      {circOpmcs.map(o => (
+                          <option key={o.id} value={o.id}>{o.code} — {o.name}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                      EXCHANGE *
+                    </label>
+                    <Select value={selExchange} onChange={setSelExchange} style={{ width:'100%' }}>
+                      <option value="">
+                        {!selOpmc ? '— Select an OPMC first —' : circLoading.exchange ? 'Loading…'
+                            : circExchanges.length === 0 ? '— No Exchanges for this OPMC —' : '— Select Exchange —'}
+                      </option>
+                      {circExchanges.map(e => (
+                          <option key={e.id} value={e.id}>{e.code} — {e.name}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                      CAB *
+                    </label>
+                    <Select value={selCab} onChange={setSelCab} style={{ width:'100%' }}>
+                      <option value="">
+                        {!selExchange ? '— Select an Exchange first —' : circLoading.cab ? 'Loading…'
+                            : circCabs.length === 0 ? '— No Cabs for this Exchange —' : '— Select Cab —'}
+                      </option>
+                      {circCabs.map(c => (
+                          <option key={c.id} value={c.id}>{c.code} — {c.name}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                      DP *
+                    </label>
+                    <Select value={selDp} onChange={setSelDp} style={{ width:'100%' }}>
+                      <option value="">
+                        {!selCab ? '— Select a Cab first —' : circLoading.dp ? 'Loading…'
+                            : circDps.length === 0 ? '— No DPs for this Cab —' : '— Select DP —'}
+                      </option>
+                      {circDps.map(d => (
+                          <option key={d.id} value={d.id}>{d.code} — {d.name}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                      CIRCUIT *
+                    </label>
+                    <Select value={selCircuit} onChange={setSelCircuit} style={{ width:'100%' }}>
+                      <option value="">
+                        {!selDp ? '— Select a DP first —' : circLoading.circuit ? 'Loading…'
+                            : circCircuits.length === 0 ? '— No Circuits for this DP —' : '— Select Circuit —'}
+                      </option>
+                      {circCircuits.map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.code}{c.circuitCategoryCode ? ` — ${c.circuitCategoryCode}` : ''}
+                          </option>
+                      ))}
+                    </Select>
+                  </div>
+                  <Btn
+                      variant="primary" onClick={doAttachCircuit}
+                      disabled={!selCircuit || attaching}
+                      style={{ alignSelf:'flex-end', padding:'9px 20px', fontSize:13 }}
+                  >
+                    {attaching ? '⏳ Attaching…' : '🔗 Attach Circuit'}
+                  </Btn>
+                </div>
+              </div>
+          )}
+
+          {/* CAUSE (Stage 2) — Admin/Team-Lead post-hoc structured classification, using the
+              Technician's Stage-1 free-text causeOfFault as real diagnostic input. */}
+          {tab === 'cause' && (
+              <div>
+                <div style={{
+                  background:'#1C2333', borderRadius:10, padding:14,
+                  border:`1px solid ${C.accentD}33`, marginBottom:16, fontSize:12,
+                  color:C.muted, lineHeight:1.6,
+                }}>
+                  ℹ️ Classify the real cause of this fault against the master cause list. Pick a
+                  Fault Type, then a Cause Category, then the specific Cause — each selection
+                  filters the next.
+                </div>
+
+                {/* Technician's Stage-1 free-text finding, prominently at the top so the reviewer
+                    classifies based on real diagnostic input, not guesswork. */}
+                <div style={{
+                  background:C.surface2, borderRadius:10, padding:14,
+                  border:`1px solid ${fault.causeOfFault ? C.orange+'55' : C.border}`,
+                  marginBottom:16,
+                }}>
+                  <div style={{ fontSize:10, fontWeight:800, color:C.muted, letterSpacing:0.6, marginBottom:6 }}>
+                    🔍 WHAT THE TECHNICIAN FOUND
+                  </div>
+                  {fault.causeOfFault ? (
+                      <div style={{ fontSize:13, color:C.text, lineHeight:1.5 }}>{fault.causeOfFault}</div>
+                  ) : (
+                      <div style={{ fontSize:12, color:C.muted, fontStyle:'italic' }}>
+                        No free-text finding recorded by the Technician on this fault yet.
+                      </div>
+                  )}
+                </div>
+
+                {fault.causeCode && (
+                    <div style={{
+                      display:'flex', alignItems:'center', gap:10,
+                      background:C.surface2, borderRadius:10, padding:12,
+                      border:`1px solid ${C.border}`, marginBottom:16, fontSize:12,
+                    }}>
+                      <span style={{ color:C.muted }}>Currently classified:</span>
+                      <span style={{ color:C.text, fontWeight:700 }}>🔍 Cause {fault.causeCode}</span>
+                    </div>
+                )}
+
+                <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                  <div>
+                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                      FAULT TYPE *
+                    </label>
+                    <Select value={selCauseType} onChange={setSelCauseType} style={{ width:'100%' }}>
+                      <option value="">
+                        {causeLoading.type ? 'Loading…' : '— Select Fault Type —'}
+                      </option>
+                      {causeTypes.map(t => (
+                          <option key={t.id} value={t.id}>{t.typeCode} — {t.description}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                      CAUSE CATEGORY *
+                    </label>
+                    <Select value={selCauseCategory} onChange={setSelCauseCategory} style={{ width:'100%' }}>
+                      <option value="">
+                        {!selCauseType ? '— Select a Fault Type first —' : causeLoading.category ? 'Loading…'
+                            : causeCategories.length === 0 ? '— No Cause Categories for this Type —' : '— Select Cause Category —'}
+                      </option>
+                      {causeCategories.map(c => (
+                          <option key={c.id} value={c.id}>{c.causeCategoryCode} — {c.description}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
+                      CAUSE OF FAULT *
+                    </label>
+                    <Select value={selCauseOfFault} onChange={setSelCauseOfFault} style={{ width:'100%' }}>
+                      <option value="">
+                        {!selCauseCategory ? '— Select a Cause Category first —' : causeLoading.cause ? 'Loading…'
+                            : causeOfFaults.length === 0 ? '— No Causes for this Category —' : '— Select Cause —'}
+                      </option>
+                      {causeOfFaults.map(c => (
+                          <option key={c.id} value={c.id}>{c.causeCode} — {c.description}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <Btn
+                      variant="primary" onClick={doAttachCause}
+                      disabled={!selCauseOfFault || attachingCause}
+                      style={{ alignSelf:'flex-end', padding:'9px 20px', fontSize:13 }}
+                  >
+                    {attachingCause ? '⏳ Classifying…' : '🔍 Classify Cause'}
+                  </Btn>
+                </div>
+              </div>
+          )}
         </div>
       </Modal>
   );
@@ -950,24 +1295,19 @@ function FaultDetailModal({ fault, technicians, currentUser, open, onClose, onSu
 // ═══════════════════════════════════════════════════════════════════════════════
 // BULK ASSIGN MODAL
 // ═══════════════════════════════════════════════════════════════════════════════
-function BulkAssignModal({ faultIds, technicians, currentUser, open, onClose, onSuccess }) {
-  const [techId,   setTechId]   = useState('');
+function BulkAssignModal({ faultIds, workGroups, open, onClose, onSuccess }) {
+  const [wgId,     setWgId]     = useState('');
   const [priority, setPriority] = useState('MEDIUM');
   const [notes,    setNotes]    = useState('');
   const [loading,  setLoading]  = useState(false);
 
-  const isAdminUser = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
-  const assignableUsers = isAdminUser
-      ? technicians.filter(t => t.role === 'TEAM_LEAD')
-      : technicians.filter(t => t.role === 'TECHNICIAN' && t.branchId === currentUser?.branchId);
+  const activeWorkGroups = (workGroups || []).filter(wg => wg.isActive);
 
   const doAssign = async () => {
-    if (!techId) return;
+    if (!wgId) return;
     setLoading(true);
     try {
-      const payload = isAdminUser
-          ? { faultIds, teamLeadId: Number(techId), priority, notes, notifyTechnician: true }
-          : { faultIds, technicianId: Number(techId), priority, notes, notifyTechnician: true };
+      const payload = { faultIds, workGroupId: Number(wgId), priority, notes, notifyTeamLead: true };
       const res = await post('/api/faults/bulk-assign', payload);
       onSuccess(
           `Bulk assigned: ${res.successCount}/${res.totalRequested} faults`,
@@ -991,16 +1331,19 @@ function BulkAssignModal({ faultIds, technicians, currentUser, open, onClose, on
             border:`1px solid ${C.border}`, fontSize:12, color:C.muted,
             lineHeight:1.6,
           }}>
-            All selected faults will be assigned to one {isAdminUser ? 'team lead' : 'technician'}. A job will be created for each fault.
+            All selected faults will be assigned to one Work Group's incoming queue. Its Team Lead
+            then self-assigns or dispatches each one to a Technician.
           </div>
           <div>
             <label style={{ fontSize:11, color:C.muted, fontWeight:700, display:'block', marginBottom:5 }}>
-              {isAdminUser ? 'TEAM LEAD *' : 'TECHNICIAN *'}
+              WORK GROUP *
             </label>
-            <Select value={techId} onChange={setTechId} style={{ width:'100%' }}>
-              <option value="">— Select {isAdminUser ? 'team lead' : 'technician'} —</option>
-              {assignableUsers.map(t => (
-                  <option key={t.id} value={t.id}>{t.fullName} ({t.phone})</option>
+            <Select value={wgId} onChange={setWgId} style={{ width:'100%' }}>
+              <option value="">— Select Work Group —</option>
+              {activeWorkGroups.map(wg => (
+                  <option key={wg.id} value={wg.id}>
+                    {wg.name}{wg.teamLeadName ? ` — Team Lead: ${wg.teamLeadName}` : ' — no Team Lead assigned'}
+                  </option>
               ))}
             </Select>
           </div>
@@ -1022,7 +1365,7 @@ function BulkAssignModal({ faultIds, technicians, currentUser, open, onClose, on
           </div>
           <div style={{ display:'flex', gap:10, justifyContent:'flex-end', paddingTop:4 }}>
             <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-            <Btn variant="primary" onClick={doAssign} disabled={!techId || loading}>
+            <Btn variant="primary" onClick={doAssign} disabled={!wgId || loading}>
               {loading ? '⏳ Assigning…' : `🔧 Assign ${faultIds.length} Faults`}
             </Btn>
           </div>
@@ -1037,7 +1380,7 @@ function BulkAssignModal({ faultIds, technicians, currentUser, open, onClose, on
 export default function FaultsPage() {
   const { user: currentUser } = useAuth();
   const [faults,      setFaults]      = useState([]);
-  const [technicians, setTechnicians] = useState([]);
+  const [workGroups,  setWorkGroups]  = useState([]);
   const [loading,     setLoading]     = useState(true);
   const [selected,    setSelected]    = useState(new Set());
   const [detail,      setDetail]      = useState(null);
@@ -1060,18 +1403,22 @@ export default function FaultsPage() {
   const fetchFaults = useCallback(async () => {
     setLoading(true);
     try {
-      const [f, u] = await Promise.all([
+      // SUPER_ADMIN sees every Work Group system-wide (SRS 5.5.6); an OPMC Admin
+      // only sees their own OPMC's — scoped server-side off the caller's own
+      // record, same as GET /api/faults (RES-023), not a client-trusted param.
+      const wgPath = currentUser?.role === 'SUPER_ADMIN'
+          ? '/api/workgroups'
+          : `/api/workgroups?opmcId=${currentUser?.opmcId}`;
+      const [f, wg] = await Promise.all([
         get('/api/faults?size=500&sort=createdAt,desc'),
-        get('/api/users'),
+        get(wgPath),
       ]);
       setFaults(Array.isArray(f) ? f : f?.content || []);
-      const techs = (Array.isArray(u) ? u : u?.content || [])
-          .filter(usr => usr.role === 'TECHNICIAN' || usr.role === 'TEAM_LEAD');
-      setTechnicians(techs);
+      setWorkGroups(Array.isArray(wg) ? wg : []);
     } catch (e) {
       console.error('Faults fetch error:', e);
     } finally { setLoading(false); }
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => { fetchFaults(); }, [fetchFaults]);
 
@@ -1086,7 +1433,8 @@ export default function FaultsPage() {
             f.description?.toLowerCase().includes(q) ||
             f.address?.toLowerCase().includes(q) ||
             f.reportedBy?.fullName?.toLowerCase().includes(q) ||
-            f.assignedTo?.fullName?.toLowerCase().includes(q)
+            f.assignedTo?.fullName?.toLowerCase().includes(q) ||
+            f.workGroupName?.toLowerCase().includes(q)
         )) return false;
         if (fStatus !== 'ALL' && f.status !== fStatus &&
             !(fStatus === 'OPEN' && f.status === 'REPORTED')) return false;
@@ -1472,6 +1820,15 @@ export default function FaultsPage() {
                                   {f.assignedTo.fullName}
                                 </div>
                               </div>
+                          ) : f.workGroupName ? (
+                              // Assigned to a Work Group, but its Team Lead hasn't self-assigned/dispatched yet.
+                              <span style={{
+                                fontSize:11, padding:'2px 8px', borderRadius:5,
+                                background:'#1C2333', color:C.purple,
+                                border:`1px solid ${C.purple}33`,
+                              }}>
+                          👥 {f.workGroupName}
+                        </span>
                           ) : (
                               <span style={{
                                 fontSize:11, padding:'2px 8px', borderRadius:5,
@@ -1571,7 +1928,7 @@ export default function FaultsPage() {
         {/* ── Fault Detail Modal ──────────────────────────────────────────── */}
         <FaultDetailModal
             fault={detail}
-            technicians={technicians}
+            workGroups={workGroups}
             currentUser={currentUser}
             open={!!detail}
             onClose={() => { setDetail(null); fetchFaults(); }}
@@ -1581,8 +1938,7 @@ export default function FaultsPage() {
         {/* ── Bulk Assign Modal ───────────────────────────────────────────── */}
         <BulkAssignModal
             faultIds={[...selected]}
-            technicians={technicians}
-            currentUser={currentUser}
+            workGroups={workGroups}
             open={bulkOpen}
             onClose={() => { setBulkOpen(false); clearSelection(); fetchFaults(); }}
             onSuccess={showToast}
