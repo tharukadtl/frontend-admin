@@ -1,6 +1,26 @@
 import api from './axios';
 
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8080/api';
+
 const usersAPI = {
+  // POST /users/import — multipart CSV upload. Raw fetch + FormData (not the
+  // axios instance) so the browser sets the multipart boundary itself, rather
+  // than fighting axios's default 'Content-Type: application/json' header —
+  // mirrors aiClient.js's aiUpload() pattern used by ModelTrainingPage.js.
+  bulkImport: (file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return fetch(`${API_BASE}/users/import`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${localStorage.getItem('accessToken')}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(data?.message || data?.error || `${r.status}`);
+      return data;
+    });
+  },
+
   // GET /users
   getAll: (params = {}) =>
     api.get('/users', { params }),

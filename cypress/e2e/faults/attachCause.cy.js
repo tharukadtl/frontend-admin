@@ -2,20 +2,20 @@
 // cause of a Fault via the cascading TypeOfFault -> CauseCategory -> CauseOfFault picker on
 // FaultDetailModal's new "🔍 Cause" tab, using the Technician's Stage-1 free-text causeOfFault as
 // the real diagnostic input shown at the top of the tab. Live verification against the real
-// running stack (fieldops on SPRING_PROFILES_ACTIVE=local against real slt_fieldops_db,
-// frontend-admin dev server), nothing stubbed — same standard as
-// cypress/e2e/faults/attachCircuit.cy.js, this spec's direct template.
+// running stack (fieldops, real MySQL, frontend-admin dev server), nothing stubbed — same standard
+// as cypress/e2e/faults/attachCircuit.cy.js, this spec's direct template.
 //
-// Real hierarchy used throughout (confirmed live against the real imported master data,
-// docs/master-data/TYPEOFFAULT.csv/CAUSECATEGORY.csv/CAUSEOFFAULT.csv):
-// TypeOfFault "DR" (DIALLING RESPONSE, id 1) -> CauseCategory "BQ" (20-MANAGED
-// DEVICES/APPLICATIONS, id 4) -> CauseOfFault "BAUH" (201-PABX SYSTEM, real db id 706).
-const REAL_CAUSE_OF_FAULT_DB_ID = 706; // cause_of_fault.id for code "BAUH"
-
-// Test fault is created fresh, per run, by cypress/support/seed_h1c_fault.py (via the
-// seedFaultWithCause task, --cause-of-fault) — same reasoning as attachCircuit.cy.js: a real
-// POST /api/faults needs CLIENT/OTP auth this spec can't drive from a browser context. This seed
-// also sets faults.cause_of_fault, so the Cause tab has a real Technician finding to render.
+// 2026-09-03, CI-portability fix. Originally asserted against the real imported master-data
+// hierarchy (TypeOfFault "DR" -> CauseCategory "BQ" -> CauseOfFault "BAUH",
+// REAL_CAUSE_OF_FAULT_DB_ID = 706) -- a hardcoded dependency on the real
+// TYPEOFFAULT.csv/CAUSECATEGORY.csv/CAUSEOFFAULT.csv import a fresh Testcontainers database has
+// no CI-portable path to reproduce. Investigated before rewriting, same finding as
+// attachCircuit.cy.js's identical fix: nothing this spec asserts needs the real codes. Unlike the
+// Circuit hierarchy, though, CauseHierarchyController is read-only by design (confirmed — no
+// create endpoints exist for TypeOfFault/CauseCategory/CauseOfFault at all, the same reason
+// fieldops's own H1b/H1c/Stage2 backend tests had to persist this hierarchy directly via JPA
+// rather than through a controller), so this spec's fixture chain is seeded via
+// seed_live_fixtures.py's `seed-cause` (raw SQL, short generated codes) rather than the real API.
 const TECH_FINDING = 'Customer reports intermittent dial tone, checked rosette wiring looks loose';
 
 const API = 'http://localhost:8080';
@@ -32,15 +32,23 @@ describe('Stage 2 (live) — Admin classifies a real Cause on a Fault', () => {
   let adminToken;
   let faultId;
   let uniqueMarker;
+  let causeId, causeCode, causeCategoryCode, typeCode;
 
   before(() => {
+    cy.task('seedAdmin');
+
     cy.task('seedFaultWithCause', TECH_FINDING).then(stdout => {
-      const idMatch = stdout.match(/FAULT_ID=(\d+)/);
-      const markerMatch = stdout.match(/MARKER=(.+)/);
-      expect(idMatch, `seed script output: ${stdout}`).to.not.be.null;
-      expect(markerMatch, `seed script output: ${stdout}`).to.not.be.null;
-      faultId = Number(idMatch[1]);
-      uniqueMarker = markerMatch[1].trim();
+      const grab = re => {
+        const m = stdout.match(re);
+        expect(m, `seed script output: ${stdout}`).to.not.be.null;
+        return m[1].trim();
+      };
+      faultId = Number(grab(/FAULT_ID=(\d+)/));
+      uniqueMarker = grab(/MARKER=(.+)/);
+      causeId = Number(grab(/CAUSE_ID=(\d+)/));
+      causeCode = grab(/CAUSE_CODE=(.+)/);
+      causeCategoryCode = grab(/CAUSE_CATEGORY_CODE=(.+)/);
+      typeCode = grab(/TYPE_CODE=(.+)/);
     });
 
     loginAs('superadmin', 'Admin@2024').then(t => { adminToken = t; });
@@ -48,8 +56,11 @@ describe('Stage 2 (live) — Admin classifies a real Cause on a Fault', () => {
 
   after(() => {
     if (faultId) {
-      cy.task('deleteH1cFault', faultId);
+      cy.task('deleteFault', faultId);
     }
+    // The seeded TypeOfFault/CauseCategory/CauseOfFault chain is deliberately left in place --
+    // cheap, harmless, uniquely-coded per run, same reasoning as attachCircuit.cy.js's fixture
+    // Opmc/Exchange/Cab/Dp/Circuit chain.
   });
 
   it('shows the Technician\'s free-text finding, cascades the hierarchy, and persists the real classification', () => {
@@ -83,20 +94,21 @@ describe('Stage 2 (live) — Admin classifies a real Cause on a Fault', () => {
 
     const selectFor = label => cy.contains('label', label).parent().find('select');
 
-    // ── Cascade: TypeOfFault -> CauseCategory -> CauseOfFault, real endpoints, real data ──────
+    // ── Cascade: TypeOfFault -> CauseCategory -> CauseOfFault, real endpoints, the fixture
+    //    chain this spec's before() hook just created ──────────────────────────────────────────
     cy.intercept('GET', '**/api/cause-categories?typeOfFaultId=*').as('getCategories');
-    selectFor('FAULT TYPE *').find('option').contains(/^DR —/).then($opt => {
+    selectFor('FAULT TYPE *').find('option').contains(typeCode).then($opt => {
       selectFor('FAULT TYPE *').select($opt.val());
     });
     cy.wait('@getCategories');
 
     cy.intercept('GET', '**/api/cause-of-faults?causeCategoryId=*').as('getCauses');
-    selectFor('CAUSE CATEGORY *').find('option').contains(/^BQ —/).then($opt => {
+    selectFor('CAUSE CATEGORY *').find('option').contains(causeCategoryCode).then($opt => {
       selectFor('CAUSE CATEGORY *').select($opt.val());
     });
     cy.wait('@getCauses');
 
-    selectFor('CAUSE OF FAULT *').find('option').contains(/^BAUH —/).then($opt => {
+    selectFor('CAUSE OF FAULT *').find('option').contains(causeCode).then($opt => {
       selectFor('CAUSE OF FAULT *').select($opt.val());
     });
 
@@ -105,10 +117,10 @@ describe('Stage 2 (live) — Admin classifies a real Cause on a Fault', () => {
     cy.contains('button', 'Classify Cause').should('not.be.disabled').click();
 
     cy.wait('@attachCause').then(({request, response}) => {
-      expect(request.body).to.deep.equal({causeId: REAL_CAUSE_OF_FAULT_DB_ID});
+      expect(request.body).to.deep.equal({causeId});
       expect(response.statusCode).to.eq(200);
-      expect(response.body.causeId).to.eq(REAL_CAUSE_OF_FAULT_DB_ID);
-      expect(response.body.causeCode).to.eq('BAUH');
+      expect(response.body.causeId).to.eq(causeId);
+      expect(response.body.causeCode).to.eq(causeCode);
     });
 
     cy.contains('Cause classified for fault').should('be.visible');
@@ -120,8 +132,8 @@ describe('Stage 2 (live) — Admin classifies a real Cause on a Fault', () => {
       url: `${API}/api/faults/${faultId}`,
       headers: {Authorization: `Bearer ${adminToken}`},
     }).then(res => {
-      expect(res.body.causeId, 'persisted causeId, via a fresh GET').to.eq(REAL_CAUSE_OF_FAULT_DB_ID);
-      expect(res.body.causeCode, 'persisted causeCode, via a fresh GET').to.eq('BAUH');
+      expect(res.body.causeId, 'persisted causeId, via a fresh GET').to.eq(causeId);
+      expect(res.body.causeCode, 'persisted causeCode, via a fresh GET').to.eq(causeCode);
     });
 
     // Reopen the fault and confirm the "currently classified" summary now renders it.
@@ -130,6 +142,6 @@ describe('Stage 2 (live) — Admin classifies a real Cause on a Fault', () => {
     cy.contains(uniqueMarker).should('be.visible').click();
     cy.contains('button', 'Cause').click();
     cy.contains('Currently classified:').should('be.visible');
-    cy.contains('Cause BAUH').should('be.visible');
+    cy.contains(`Cause ${causeCode}`).should('be.visible');
   });
 });

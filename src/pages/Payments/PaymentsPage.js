@@ -40,13 +40,22 @@ const P = {
 };
 
 // ─── Status config ─────────────────────────────────────────────────────────────
+// Mirrors the backend's Payment.PaymentStatus enum exactly (7 values) — every
+// real status must have an entry here, since StatusPill has no safe fallback
+// for one that's missing (see UNKNOWN_STATUS_CFG below for genuinely unknown values).
 const STATUS_CFG = {
-  DRAFT:                 { label: 'Pending Review',  bg: P.goldL,    color: P.gold,    dot: P.gold    },
-  FINAL:                 { label: 'Final / Billed',  bg: P.emeraldL, color: P.emerald, dot: P.emerald },
-  NOT_APPROVED:          { label: 'Not Approved',    bg: P.roseL,    color: P.rose,    dot: P.rose    },
-  DISPUTED:              { label: 'Disputed',        bg: P.amberL,   color: P.amber,   dot: P.amber   },
-  PENDING_CLIENT_REVIEW: { label: 'Awaiting Client', bg: P.skyL,     color: P.sky,     dot: P.sky     },
+  DRAFT:                   { label: 'Pending Review',       bg: P.goldL,    color: P.gold,    dot: P.gold    },
+  CLARIFICATION_REQUESTED: { label: 'Needs Clarification',  bg: P.goldL,    color: P.gold,    dot: P.gold    },
+  FINAL:                   { label: 'Final / Billed',       bg: P.emeraldL, color: P.emerald, dot: P.emerald },
+  CLIENT_ACCEPTED:         { label: 'Accepted by Client',   bg: P.emeraldL, color: P.emerald, dot: P.emerald },
+  NOT_APPROVED:            { label: 'Not Approved',         bg: P.roseL,    color: P.rose,    dot: P.rose    },
+  DISPUTED:                { label: 'Disputed',             bg: P.amberL,   color: P.amber,   dot: P.amber   },
+  PENDING_CLIENT_REVIEW:   { label: 'Awaiting Client',      bg: P.skyL,     color: P.sky,     dot: P.sky     },
 };
+// Genuine fallback for a status that isn't one of the 7 above — the old code
+// referenced STATUS_CFG.PENDING, a key that never existed, so this fallback
+// itself resolved to undefined and crashed StatusPill on the next line (c.bg).
+const UNKNOWN_STATUS_CFG = { label: 'Unknown', bg: P.panel, color: P.muted, dot: P.muted };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 const fmtLKR  = v => v != null
@@ -58,6 +67,19 @@ const fmtDate = d => d
 const fmtDT   = d => d
     ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
     : '—';
+// Photos are served from the backend's /uploads/** route (now an authenticated,
+// per-file-authorized controller — see QA_Compliance_Consolidated_Report.md Stage G),
+// not the /api host. Was duplicated identically in ReviewPanel and DisputePanel —
+// hoisted here, single source. An <img> tag can't attach an Authorization header, so
+// the current JWT rides along as ?token= — SecurityConfig's jwtAuthFilter accepts either.
+const resolvePhotoUrl = (p) => {
+  const path = typeof p === 'string' ? p : (p?.url || p?.path || '');
+  if (!path) return '';
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = `${API}${path.startsWith('/') ? '' : '/'}${path}`;
+  const token = localStorage.getItem('accessToken');
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+};
 const timeAgo = d => {
   if (!d) return '—';
   const s = Math.floor((Date.now() - new Date(d)) / 1000);
@@ -72,7 +94,7 @@ const timeAgo = d => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const StatusPill = ({ status }) => {
-  const c = STATUS_CFG[status] || STATUS_CFG.PENDING;
+  const c = STATUS_CFG[status] || UNKNOWN_STATUS_CFG;
   return (
       <span style={{
         display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -252,15 +274,41 @@ function ReviewPanel({ payment, onApprove, onReject, onClose }) {
   const [loading,       setLoading]       = useState(false);
   const [photoIdx,      setPhotoIdx]      = useState(0);
 
+  // #12 (FR-9, SRS 5.3.1.3) — if the client was unavailable or declined to
+  // sign, the linked Job carries a review flag + reason. No new endpoint: this
+  // reuses the existing GET /api/jobs/{id}, exactly as the Team Lead's own
+  // payment-submission screen already does for the same fields.
+  const [needsTeamLeadReview, setNeedsTeamLeadReview] = useState(false);
+  const [signatureDeclineReason, setSignatureDeclineReason] = useState('');
+
+  // Reset on EVERY selection change, including the change to "nothing selected"
+  // after a payment is processed — otherwise the approve/reject form stays open
+  // and populated and re-renders as soon as another payment is picked.
   useEffect(() => {
-    if (payment) {
-      setNotes('');
-      setRejectReason('');
-      setAdjustedAmt(payment.totalChargeableAmount ?? '');
-      setMode(null);
-      setPhotoIdx(0);
-    }
+    setNotes('');
+    setRejectReason('');
+    setAdjustedAmt(payment?.totalAmount ?? '');
+    setMode(null);
+    setPhotoIdx(0);
+    setNeedsTeamLeadReview(false);
+    setSignatureDeclineReason('');
   }, [payment?.id]);
+
+  useEffect(() => {
+    if (!payment?.jobId) return;
+    let cancelled = false;
+    get(`/api/jobs/${payment.jobId}`)
+      .then(job => {
+        if (cancelled) return;
+        setNeedsTeamLeadReview(Boolean(job?.needsTeamLeadReview));
+        setSignatureDeclineReason(job?.signatureDeclineReason || '');
+      })
+      .catch(() => {
+        // Non-fatal — the review flag is an informational aid, not required
+        // to approve/reject/amend a payment.
+      });
+    return () => { cancelled = true; };
+  }, [payment?.jobId]);
 
   if (!payment) return (
       <div style={{
@@ -282,13 +330,6 @@ function ReviewPanel({ payment, onApprove, onReject, onClose }) {
       .split(',').map(s => s.trim()).filter(Boolean);
   const hasLabour  = payment.labourStartTime || payment.labourEndTime || payment.hourlyRate;
 
-  // Photos are served from the backend's static /uploads/** route, not the /api host.
-  const resolvePhotoUrl = (p) => {
-    const path = typeof p === 'string' ? p : (p?.url || p?.path || '');
-    if (!path) return '';
-    return /^https?:\/\//i.test(path) ? path : `${API}${path.startsWith('/') ? '' : '/'}${path}`;
-  };
-
   const handleApprove = async () => {
     setLoading(true);
     try {
@@ -303,8 +344,8 @@ function ReviewPanel({ payment, onApprove, onReject, onClose }) {
         adjustedAmount: adjustedAmt ? Number(adjustedAmt) : null,
         reason: notes || null,
       });
-      onApprove('Payment approved successfully', 'success');
-    } catch { onApprove('Approval failed', 'error'); }
+      onApprove('Payment approved successfully', 'success', true);
+    } catch { onApprove('Approval failed', 'error', false); }
     finally { setLoading(false); }
   };
 
@@ -322,8 +363,8 @@ function ReviewPanel({ payment, onApprove, onReject, onClose }) {
         decision: 'REJECTED',
         reason: rejectReason,
       });
-      onReject('Payment rejected', 'warning');
-    } catch { onReject('Rejection failed', 'error'); }
+      onReject('Payment rejected', 'warning', true);
+    } catch { onReject('Rejection failed', 'error', false); }
     finally { setLoading(false); }
   };
 
@@ -408,6 +449,23 @@ function ReviewPanel({ payment, onApprove, onReject, onClose }) {
 
         {/* Scrollable body */}
         <div style={{ overflowY: 'auto', flex: 1, padding: '20px 24px' }}>
+
+          {/* #12 (FR-9, SRS 5.3.1.3) — client unavailable/declined to sign.
+              Informational only: never blocks approve/reject/adjust below. */}
+          {needsTeamLeadReview && (
+              <div style={{
+                padding: '10px 12px', borderRadius: 8,
+                background: P.amberL, border: `1px solid ${P.amber}44`,
+                marginBottom: 16,
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: P.amber, marginBottom: 4 }}>
+                  🚩 Flagged for Review — No Customer Signature Captured
+                </div>
+                <div style={{ fontSize: 12, color: P.text }}>
+                  {signatureDeclineReason || 'The client was unavailable or declined to sign.'}
+                </div>
+              </div>
+          )}
 
           {/* Amount summary */}
           <SectionLabel>Billing Summary</SectionLabel>
@@ -1054,7 +1112,7 @@ function HistoryTab({ onToast }) {
                 <div>
                   <div style={{ fontSize: 10, color: P.muted, fontWeight: 800, marginBottom: 4 }}>APPROVED AMOUNT</div>
                   <div style={{ fontSize: 14, fontWeight: 800, color: P.gold, fontFamily: 'Playfair Display, serif' }}>
-                    {fmtLKR(selected.approvedAmount || selected.totalChargeableAmount)}
+                    {fmtLKR(selected.approvedAmount || selected.totalAmount)}
                   </div>
                 </div>
               </div>
@@ -1078,22 +1136,16 @@ function DisputePanel({ payment, onAmend, onClose }) {
 
   // Prefill the three adjustable line items with the bill's current values,
   // mirroring ReviewPanel's adjust-mode which seeds adjustedAmt from the current value.
+  // Reset on EVERY selection change, including the change to "nothing selected"
+  // after a bill is amended — otherwise the amendment form stays open with the
+  // processed bill's figures still in it.
   useEffect(() => {
-    if (payment) {
-      setFoc(payment.materialsFocTotal ?? '');
-      setChargeable(payment.materialsChargeableTotal ?? '');
-      setLabour(payment.labourCharge ?? '');
-      setJustification('');
-      setMode(null);
-    }
+    setFoc(payment?.materialsFocTotal ?? '');
+    setChargeable(payment?.materialsChargeableTotal ?? '');
+    setLabour(payment?.labourCharge ?? '');
+    setJustification('');
+    setMode(null);
   }, [payment?.id]);
-
-  // Photos are served from the backend's static /uploads/** route, not the /api host.
-  const resolvePhotoUrl = (p) => {
-    const path = typeof p === 'string' ? p : (p?.url || p?.path || '');
-    if (!path) return '';
-    return /^https?:\/\//i.test(path) ? path : `${API}${path.startsWith('/') ? '' : '/'}${path}`;
-  };
 
   if (!payment) return (
       <div style={{
@@ -1125,8 +1177,8 @@ function DisputePanel({ payment, onAmend, onClose }) {
         labourCharge:             labour     !== '' ? Number(labour)     : null,
         justification,
       });
-      onAmend('Bill amended and resent to client', 'success');
-    } catch { onAmend('Amendment failed', 'error'); }
+      onAmend('Bill amended and resent to client', 'success', true);
+    } catch { onAmend('Amendment failed', 'error', false); }
     finally { setLoading(false); }
   };
 
@@ -1393,17 +1445,19 @@ function DisputesTab({ onToast }) {
         p.paymentNumber?.toLowerCase().includes(q);
   });
 
-  // After amend: re-fetch (the amended bill is now PENDING_CLIENT_REVIEW and drops
-  // out of the DISPUTED filter) and advance to the next remaining dispute.
-  const handleAmend = useCallback((msg, type) => {
+  // After a SUCCESSFUL amend: clear the panel (the bill has been answered — leaving
+  // its form open invites a second amendment of an already-amended bill) and re-fetch,
+  // since the amended bill is now PENDING_CLIENT_REVIEW and drops out of the DISPUTED
+  // filter. `load` re-selects from the list it just fetched, so no second reselect is
+  // needed here — the old one ran against a stale `disputes` closure and put the
+  // just-amended bill straight back on screen.
+  // On failure the selection is kept so the admin can correct and retry.
+  const handleAmend = useCallback((msg, type, ok) => {
     onToast(msg, type);
-    load().then(() => {
-      setSelected(prev => {
-        const next = disputes.find(p => p.id !== prev?.id && p.status === 'DISPUTED');
-        return next || null;
-      });
-    });
-  }, [load, disputes, onToast]);
+    if (!ok) return;
+    setSelected(null);
+    load();
+  }, [load, onToast]);
 
   return (
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
@@ -1509,13 +1563,26 @@ export default function PaymentsPage() {
 
   const showToast = useCallback((msg, type = 'success') => setToast({ msg, type }), []);
 
+  // First load only: open on the head of the queue. Kept in a ref because
+  // loadPending is memoised with no deps and must not read stale state.
+  const firstLoad = useRef(true);
+
   const loadPending = useCallback(async () => {
     setLoading(true);
     try {
       const d = await get('/api/payments/pending');
       const list = Array.isArray(d) ? d : d?.content || [];
       setPayments(list);
-      if (list.length > 0 && !selected) setSelected(list[0]);
+      // Re-select against the list that was JUST fetched: keep the current
+      // selection only while it is still pending, so a payment that has left the
+      // queue can never remain in the review panel. The old `!selected` check read
+      // the first-render null through a stale closure and re-selected list[0]
+      // unconditionally.
+      setSelected(prev => {
+        if (prev) return list.find(p => p.id === prev.id) || null;
+        return firstLoad.current ? (list[0] || null) : null;
+      });
+      firstLoad.current = false;
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
@@ -1535,21 +1602,23 @@ export default function PaymentsPage() {
       .sort((a, b) => {
         if (sortBy === 'newest')  return new Date(b.createdAt) - new Date(a.createdAt);
         if (sortBy === 'oldest')  return new Date(a.createdAt) - new Date(b.createdAt);
-        if (sortBy === 'highest') return (b.totalChargeableAmount||0) - (a.totalChargeableAmount||0);
+        if (sortBy === 'highest') return (b.totalAmount||0) - (a.totalAmount||0);
         if (sortBy === 'urgent')  return (b.urgency==='URGENT'?1:0) - (a.urgency==='URGENT'?1:0);
         return 0;
       });
 
-  // After approve/reject: reload and advance to next
-  const handleAction = useCallback((msg, type) => {
+  // After a SUCCESSFUL approve/reject/adjust: close the panel on the payment that
+  // was just processed (leaving its form open is one click away from re-submitting
+  // a decision) and reload the queue. loadPending re-selects from the list it just
+  // fetched; the old second reselect ran against a stale `payments` closure and
+  // re-selected the very payment that had just been decided.
+  // On failure the selection is kept so the admin can retry.
+  const handleAction = useCallback((msg, type, ok) => {
     showToast(msg, type);
-    loadPending().then(() => {
-      setSelected(prev => {
-        const next = payments.find(p => p.id !== prev?.id && p.status === 'DRAFT');
-        return next || null;
-      });
-    });
-  }, [loadPending, payments, showToast]);
+    if (!ok) return;
+    setSelected(null);
+    loadPending();
+  }, [loadPending, showToast]);
 
   // Inject CSS
   useEffect(() => {

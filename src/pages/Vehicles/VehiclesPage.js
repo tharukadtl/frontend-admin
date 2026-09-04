@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { DataTable, StatusBadge, PageHeader, KpiCard, Btn, Modal, FormField, inputStyle } from '../../components/index';
 import vehicleApi from '../../api/vehicles';
-import branchApi from '../../api/branches';
+import opmcApi from '../../api/opmc';
 
 const EMPTY = { registrationNumber: '', make: '', model: '', modelYear: '', vehicleType: 'VAN',
-  fuelType: 'PETROL', branchId: '', currentOdometer: 0, insuranceExpiry: '',
+  fuelType: 'PETROL', opmcId: '', currentOdometer: 0, insuranceExpiry: '',
   revenueLicenseExpiry: '', emissionTestExpiry: '', insuranceCompany: '', notes: '' };
 
 export default function VehiclesPage() {
   const [vehicles, setVehicles]     = useState([]);
   const [alertSummary, setSummary]  = useState(null);
-  const [branches, setBranches]     = useState([]);
+  const [opmcs, setOpmcs]           = useState([]);
   const [tab, setTab]               = useState('all');
   const [loading, setLoading]       = useState(true);
   const [modal, setModal]           = useState(null);
@@ -18,7 +18,7 @@ export default function VehiclesPage() {
   const [editId, setEditId]         = useState(null);
   const [saving, setSaving]         = useState(false);
 
-  useEffect(() => { loadAll(); loadBranches(); }, []);
+  useEffect(() => { loadAll(); loadOpmcs(); }, []);
 
   const loadAll = async () => {
     setLoading(true);
@@ -29,8 +29,8 @@ export default function VehiclesPage() {
     } finally { setLoading(false); }
   };
 
-  const loadBranches = async () => {
-    try { const res = await branchApi.getAll(); setBranches(res.data || []); }
+  const loadOpmcs = async () => {
+    try { const res = await opmcApi.getAll(); setOpmcs(res.data || []); }
     catch (e) { console.error(e); }
   };
 
@@ -38,18 +38,18 @@ export default function VehiclesPage() {
   const openEdit   = (v) => {
     setForm({ registrationNumber: v.registrationNumber, make: v.make, model: v.model,
       modelYear: v.modelYear, vehicleType: v.vehicleType, fuelType: v.fuelType,
-      branchId: v.branchId || '', currentOdometer: v.currentOdometer || 0,
+      opmcId: v.opmcId || '', currentOdometer: v.currentOdometer || 0,
       insuranceExpiry: v.insuranceExpiry || '', revenueLicenseExpiry: v.revenueLicenseExpiry || '',
       emissionTestExpiry: v.emissionTestExpiry || '', insuranceCompany: v.insuranceCompany || '', notes: v.notes || '' });
     setEditId(v.id); setModal('form');
   };
 
   const handleSave = async () => {
-    if (!form.branchId) return alert('Please select a branch.');
+    if (!form.opmcId) return alert('Please select an OPMC.');
     setSaving(true);
     const payload = {
       ...form,
-      branchId:             Number(form.branchId),
+      opmcId:               Number(form.opmcId),
       modelYear:            form.modelYear   ? Number(form.modelYear)   : null,
       currentOdometer:      form.currentOdometer !== '' ? Number(form.currentOdometer) : 0,
       insuranceExpiry:      form.insuranceExpiry      || null,
@@ -78,7 +78,7 @@ export default function VehiclesPage() {
     { key: 'make',  label: 'Make' },
     { key: 'model', label: 'Model' },
     { key: 'vehicleType', label: 'Type' },
-    { key: 'branchName',  label: 'Branch', render: v => v || '—' },
+    { key: 'opmcName',    label: 'OPMC', render: v => v || '—' },
     { key: 'currentOdometer', label: 'Odometer', render: v => v ? `${Number(v).toLocaleString()} km` : '—' },
     { key: 'insuranceExpiry',       label: 'Insurance Exp.', render: v => v || '—' },
     { key: 'revenueLicenseExpiry',  label: 'Revenue Lic. Exp.', render: v => v || '—' },
@@ -135,10 +135,10 @@ export default function VehiclesPage() {
             <FormField label="Registration Number" required>
               <input style={inputStyle} value={form.registrationNumber} onChange={e => setForm({ ...form, registrationNumber: e.target.value })} placeholder="WP CAE-3456" />
             </FormField>
-            <FormField label="Branch">
-              <select style={inputStyle} value={form.branchId} onChange={e => setForm({ ...form, branchId: e.target.value })}>
-                <option value="">-- Select Branch --</option>
-                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            <FormField label="OPMC">
+              <select style={inputStyle} value={form.opmcId} onChange={e => setForm({ ...form, opmcId: e.target.value })}>
+                <option value="">-- Select OPMC --</option>
+                {opmcs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select>
             </FormField>
             <FormField label="Make" required><input style={inputStyle} value={form.make} onChange={e => setForm({ ...form, make: e.target.value })} /></FormField>

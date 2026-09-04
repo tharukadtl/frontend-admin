@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { NotificationSocketProvider } from './context/NotificationSocketContext';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -10,18 +11,23 @@ import DashboardPage     from './pages/Dashboard/DashboardPage';
 import FaultsPage        from './pages/Faults/FaultsPage';
 import JobsPage          from './pages/Jobs/JobsPage';
 import UsersPage         from './pages/Users/UsersPage';
-import BranchesPage      from './pages/Branches/BranchesPage';
+import OpmcsPage         from './pages/Opmcs/OpmcsPage';
+import WorkGroupsPage    from './pages/WorkGroups/WorkGroupsPage';
 import InventoryPage     from './pages/Inventory/InventoryPage';
 import VehiclesPage      from './pages/Vehicles/VehiclesPage';
 import PaymentsPage      from './pages/Payments/PaymentsPage';
 import KpiPage           from './pages/KPI/KpiPage';
 import NotificationsPage from './pages/Notifications/NotificationsPage';
-import AIDashboardPage   from './pages/AI/AIDashboardPage';
+import AIDashboardPage      from './pages/AI/AIDashboardPage';
+import ModelTrainingPage    from './pages/AI/ModelTrainingPage';
+import ResourcePlanningPage from './pages/AI/ResourcePlanningPage';
 import ReportsPage       from './pages/Reports/ReportsPage';
+import ResourceAllocationPage from './pages/ResourceAllocation/ResourceAllocationPage';
 
 function App() {
   return (
     <AuthProvider>
+      <NotificationSocketProvider>
       <Router>
         <Routes>
 
@@ -53,12 +59,26 @@ function App() {
             <Route path="/vehicles"      element={<VehiclesPage />} />
             <Route path="/kpi"           element={<KpiPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
-            <Route path="/reports"       element={<ReportsPage />} />
 
             {/* Admin + Super Admin only */}
+            <Route path="/reports" element={
+              <ProtectedRoute roles={['SUPER_ADMIN', 'ADMIN']}>
+                <ReportsPage />
+              </ProtectedRoute>
+            } />
             <Route path="/ai-dashboard" element={
               <ProtectedRoute roles={['SUPER_ADMIN', 'ADMIN']}>
                 <AIDashboardPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/model-training" element={
+              <ProtectedRoute roles={['SUPER_ADMIN', 'ADMIN']}>
+                <ModelTrainingPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/resource-planning" element={
+              <ProtectedRoute roles={['SUPER_ADMIN', 'ADMIN']}>
+                <ResourcePlanningPage />
               </ProtectedRoute>
             } />
             <Route path="/users" element={
@@ -71,11 +91,23 @@ function App() {
                 <PaymentsPage />
               </ProtectedRoute>
             } />
+            {/* SRS 5.5.3 — OPMC pool -> Work Group allocation (Admin + Super Admin only) */}
+            <Route path="/resource-allocation" element={
+              <ProtectedRoute roles={['SUPER_ADMIN', 'ADMIN']}>
+                <ResourceAllocationPage />
+              </ProtectedRoute>
+            } />
+            {/* Critical #2 — SRS 5.5.6 Work Group creation/edit/reassignment of Team Lead */}
+            <Route path="/work-groups" element={
+              <ProtectedRoute roles={['SUPER_ADMIN', 'ADMIN']}>
+                <WorkGroupsPage />
+              </ProtectedRoute>
+            } />
 
             {/* Super Admin only */}
-            <Route path="/branches" element={
+            <Route path="/opmcs" element={
               <ProtectedRoute roles={['SUPER_ADMIN']}>
-                <BranchesPage />
+                <OpmcsPage />
               </ProtectedRoute>
             } />
           </Route>
@@ -85,6 +117,7 @@ function App() {
 
         </Routes>
       </Router>
+      </NotificationSocketProvider>
     </AuthProvider>
   );
 }

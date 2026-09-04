@@ -1,0 +1,31 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No .nvmrc/engines field pins a version anywhere in this project (confirmed, not assumed) --
+      # 20 matches the same choice already verified for SLTMobileApp this session.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Only the Jest unit tests (src/**/*.test.js) -- the Cypress e2e suite under cypress/e2e/ is
+      # deliberately not run here yet. Of 28 specs, 21 are fully self-contained (no backend needed)
+      # but 6 require a live fieldops backend with a specific seeded admin user, and 2 of those 6
+      # additionally require the real, already-imported master-data hierarchy (specific real
+      # Opmc/Exchange/Cab/Dp/Circuit and TypeOfFault/CauseCategory/CauseOfFault codes) that has no
+      # CI-portable equivalent yet -- see QA_Compliance_Consolidated_Report.md's frontend-admin CI
+      # entry for the full breakdown and recommendation. Scoped out as a deliberate follow-up
+      # rather than blocking this pipeline on it.
+      - name: Run tests
+        run: npm test

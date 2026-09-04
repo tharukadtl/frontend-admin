@@ -750,7 +750,7 @@ function LeaderboardTab({ period, onViewDetail, onAssignTarget }) {
                         {entry.technicianName}
                       </div>
                       <div style={{ fontSize:10, color:K.muted, marginBottom:8 }}>
-                        {entry.branchName||'—'}
+                        {entry.opmcName||'—'}
                       </div>
 
                       {/* Score */}
@@ -787,7 +787,7 @@ function LeaderboardTab({ period, onViewDetail, onAssignTarget }) {
           <table style={{ width:'100%', borderCollapse:'collapse' }}>
             <thead>
             <tr style={{ borderBottom:`2px solid ${K.border}` }}>
-              {['#','Technician','Branch','Score','Stars','Completed','Comp%','Satisfaction','Trend'].map((h,i)=>(
+              {['#','Technician','OPMC','Score','Stars','Completed','Comp%','Satisfaction','Trend'].map((h,i)=>(
                   <th key={i} style={{
                     padding:'10px 14px', textAlign: i<2 ? 'center' : 'left',
                     background:K.surface, fontSize:9, fontWeight:800,
@@ -853,7 +853,7 @@ function LeaderboardTab({ period, onViewDetail, onAssignTarget }) {
                           </div>
                         </td>
                         <td style={{ padding:'11px 14px', fontSize:11, color:K.muted }}>
-                          {entry.branchName||'—'}
+                          {entry.opmcName||'—'}
                         </td>
                         <td style={{ padding:'11px 14px' }}>
                       <span style={{
@@ -912,25 +912,25 @@ function LeaderboardTab({ period, onViewDetail, onAssignTarget }) {
 function TeamKpiTab({ period }) {
   const [teamData, setTeamData] = useState(null);
   const [loading,  setLoading]  = useState(true);
-  const [branchId, setBranchId] = useState('1');
+  const [opmcId, setOpmcId] = useState('1');
 
   const load = useCallback(async()=>{
     setLoading(true);
     try {
-      const d = await get(`/api/kpi/team?period=${period}&branchId=${branchId}`);
+      const d = await get(`/api/kpi/team?period=${period}&opmcId=${opmcId}`);
       setTeamData(d);
     } catch(e){console.error(e);}
     finally { setLoading(false); }
-  },[period, branchId]);
+  },[period, opmcId]);
 
   useEffect(()=>{ load(); },[load]);
 
   return (
       <div>
         <div style={{ display:'flex', gap:10, marginBottom:20, alignItems:'center' }}>
-          <TSelect value={branchId} onChange={setBranchId}>
+          <TSelect value={opmcId} onChange={setOpmcId}>
             {['1','2','3','4','5'].map(b=>(
-                <option key={b} value={b}>Branch {b}</option>
+                <option key={b} value={b}>OPMC {b}</option>
             ))}
           </TSelect>
           <Btn variant="ghost" onClick={load}>🔄 Refresh</Btn>
@@ -958,7 +958,7 @@ function TeamKpiTab({ period }) {
                   fontSize:14, fontWeight:900, color:K.electric,
                   fontFamily:'Barlow Condensed,sans-serif', letterSpacing:1, marginBottom:14,
                 }}>
-                  {teamData.branchName || `Branch ${branchId}`} — Team Overview
+                  {teamData.opmcName || `OPMC ${opmcId}`} — Team Overview
                 </div>
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))', gap:12 }}>
                   {[

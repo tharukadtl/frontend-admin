@@ -17,14 +17,24 @@ const J = {
   text:'#1E293B', muted:'#64748B', dim:'#94A3B8',
   teal:'#0D9488', tealL:'#CCFBF1', tealD:'#0F766E',
   blue:'#2563EB', blueL:'#DBEAFE',
+  violet:'#7C3AED', violetL:'#EDE9FE',
   green:'#15803D', greenL:'#DCFCE7',
   amber:'#B45309', amberL:'#FEF3C7',
   red:'#DC2626', redL:'#FEE2E2',
   white:'#FFFFFF',
 };
 
+// QA_Compliance_Consolidated_Report.md — the backend's real initial Job status is PENDING
+// (entity/Job.java), not ASSIGNED; this map previously had no PENDING key at all, so a
+// genuinely PENDING job fell through Pill's `STATUS[status]||STATUS.ASSIGNED` fallback and
+// silently rendered mislabeled as "Assigned", had no filter chip (built from
+// Object.entries(STATUS)), and showed zero manual status-change buttons (NEXT[job.status]
+// was also undefined). ASSIGNED is left in place, unused by any real backend value today —
+// removing it is a separate, out-of-scope naming question (see #10/#11's own DECIDED /
+// NOT-A-DEFECT entry: the backend enum itself deliberately stays PENDING).
 const STATUS = {
-  ASSIGNED:    { l:'Assigned',    bg:J.blueL,   c:'#1D4ED8', d:'#2563EB' },
+  PENDING:     { l:'Pending',     bg:J.violetL, c:'#6D28D9', d:J.violet  },
+  ASSIGNED:    { l:'Assigned',    bg:J.blueL,   c:'#1D4ED8', d:J.blue    },
   ACCEPTED:    { l:'Accepted',    bg:J.tealL,   c:J.tealD,   d:J.teal    },
   TRAVELLING:  { l:'Travelling',  bg:J.amberL,  c:J.amber,   d:J.amber   },
   IN_PROGRESS: { l:'In Progress', bg:'#FFF7ED', c:'#C2410C', d:'#EA580C' },
@@ -38,6 +48,10 @@ const PRI = {
   LOW:   { l:'LOW',  bg:J.greenL,  c:J.green,   bd:'#BBF7D0' },
 };
 const NEXT = {
+  // Matches JobService.validateJobTransition's real PENDING transitions (ACCEPTED/CANCELLED;
+  // REJECTED is not modeled as a manual admin action here, consistent with every other status
+  // in this map).
+  PENDING:     ['ACCEPTED','CANCELLED'],
   ASSIGNED:    ['ACCEPTED','CANCELLED'],
   ACCEPTED:    ['TRAVELLING','CANCELLED'],
   TRAVELLING:  ['IN_PROGRESS','CANCELLED'],

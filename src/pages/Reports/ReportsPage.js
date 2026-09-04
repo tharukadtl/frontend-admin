@@ -112,6 +112,102 @@ const TEMPLATES = [
     chartType:'pie',
     dataKey:  'data',
   },
+  {
+    id:       'daily_fault_summary',
+    title:    'Daily Fault Summary',
+    desc:     'Category/status breakdown, technician workload and geographic spread',
+    icon:     '📋',
+    color:    R.navy,
+    colorL:   R.navyL,
+    apiPath:  '/api/reports/daily-fault-summary',
+    params:   { period:'TODAY' },
+    chartType:'daily_summary',
+    dataKey:  'data',
+  },
+  {
+    id:       'fault_aging',
+    title:    'Fault Aging',
+    desc:     'Open faults bucketed by age, with escalation flags',
+    icon:     '⏳',
+    color:    R.rose,
+    colorL:   R.roseL,
+    apiPath:  '/api/reports/fault-aging',
+    params:   {},
+    chartType:'table',
+    dataKey:  'data',
+  },
+  {
+    id:       'material_cost',
+    title:    'Material Cost Report',
+    desc:     'FOC vs chargeable costs, most-used materials, reorder estimates',
+    icon:     '📦',
+    color:    R.teal,
+    colorL:   R.tealL,
+    apiPath:  '/api/reports/material-cost',
+    params:   { period:'THIS_MONTH' },
+    chartType:'material_cost',
+    dataKey:  'data',
+  },
+  {
+    id:       'ai_forecast',
+    title:    'AI Fault Forecast',
+    desc:     'Prophet-based fault volume prediction (via backend AI integration)',
+    icon:     '🔮',
+    color:    R.violet,
+    colorL:   R.violetL,
+    apiPath:  '/api/reports/ai-forecast',
+    params:   { horizonDays:30 },
+    chartType:'ai_forecast',
+    dataKey:  'data',
+  },
+  {
+    id:       'geographic_demand',
+    title:    'Geographic Demand',
+    desc:     'K-Means fault demand clusters by region (via backend AI integration)',
+    icon:     '🗺️',
+    color:    R.teal,
+    colorL:   R.tealL,
+    apiPath:  '/api/reports/geographic-demand',
+    params:   {},
+    chartType:'geo_demand',
+    dataKey:  'data',
+  },
+  {
+    id:       'kpi_performance',
+    title:    'KPI Performance',
+    desc:     'Technician leaderboard, star ratings and Gold/Silver/Bronze badges',
+    icon:     '🏆',
+    color:    R.amber,
+    colorL:   R.amberL,
+    apiPath:  '/api/reports/kpi-performance',
+    params:   { period:'MONTHLY' },
+    chartType:'table',
+    dataKey:  'data',
+  },
+  {
+    id:       'attendance',
+    title:    'Attendance Report',
+    desc:     'Check-in/out times, GPS location and working hours',
+    icon:     '🕒',
+    color:    R.blue,
+    colorL:   R.blueL,
+    apiPath:  '/api/reports/attendance',
+    params:   { period:'THIS_MONTH' },
+    chartType:'table',
+    dataKey:  'data',
+  },
+  {
+    id:       'audit_trail',
+    title:    'Audit Trail',
+    desc:     'Unified log of fault, payment, stock and user account changes',
+    icon:     '🔍',
+    color:    R.muted,
+    colorL:   R.bg2,
+    apiPath:  '/api/reports/audit-trail',
+    params:   { period:'THIS_MONTH' },
+    chartType:'table',
+    dataKey:  'data',
+  },
 ];
 
 // ─── Preset periods ───────────────────────────────────────────────────────────
@@ -391,6 +487,205 @@ function SatisfactionDisplay({ data }) {
   );
 }
 
+// ─── Generic data table (fault aging / KPI / attendance / audit trail) ────────
+const humanize = k => String(k)
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/^./, c => c.toUpperCase());
+
+function GenericTable({ rows }) {
+  if (!rows || !rows.length) return (
+      <div style={{ padding:'32px 0', textAlign:'center', color:R.muted, fontSize:13 }}>
+        No data for selected period
+      </div>
+  );
+  const cols = Object.keys(rows[0]).filter(k => typeof rows[0][k] !== 'object');
+  const fmtCell = v => {
+    if (v == null) return '—';
+    if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+    if (typeof v === 'number') return Number.isInteger(v) ? v : v.toFixed(1);
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) return new Date(v).toLocaleString('en-GB');
+    return v;
+  };
+  return (
+      <div style={{ overflowX:'auto' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+          <thead>
+          <tr style={{ borderBottom:`2px solid ${R.border}` }}>
+            {cols.map((c,i)=>(
+                <th key={i} style={{
+                  padding:'8px 12px', textAlign:'left', background:R.bg,
+                  fontSize:10, fontWeight:800, color:R.muted, letterSpacing:0.5, whiteSpace:'nowrap',
+                }}>{humanize(c)}</th>
+            ))}
+          </tr>
+          </thead>
+          <tbody>
+          {rows.slice(0,200).map((row,i)=>(
+              <tr key={i} style={{ borderBottom:`1px solid ${R.border2}` }}>
+                {cols.map((c,j)=>(
+                    <td key={j} style={{ padding:'9px 12px', color:R.text, whiteSpace:'nowrap' }}>
+                      {fmtCell(row[c])}
+                    </td>
+                ))}
+              </tr>
+          ))}
+          </tbody>
+        </table>
+        {rows.length > 200 && (
+            <div style={{ padding:'8px 0', fontSize:11, color:R.dim, textAlign:'center' }}>
+              Showing first 200 of {rows.length} rows — export for the full list
+            </div>
+        )}
+      </div>
+  );
+}
+
+// ─── Daily fault summary display ───────────────────────────────────────────────
+function DailyFaultSummaryDisplay({ data }) {
+  if (!data) return <Skeleton h={200} r={8}/>;
+  return (
+      <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+          <div style={{ padding:'14px 16px', borderRadius:10, background:R.bg, border:`1px solid ${R.border}` }}>
+            <div style={{ fontSize:22, fontWeight:800, color:R.navy, fontFamily:'Epilogue,sans-serif' }}>{data.totalFaults}</div>
+            <div style={{ fontSize:11, color:R.muted }}>Total Faults</div>
+          </div>
+          <div style={{ padding:'14px 16px', borderRadius:10, background:R.bg, border:`1px solid ${R.border}` }}>
+            <div style={{ fontSize:22, fontWeight:800, color:R.blue, fontFamily:'Epilogue,sans-serif' }}>{data.avgResolutionTimeHours?.toFixed(1)}h</div>
+            <div style={{ fontSize:11, color:R.muted }}>Avg Resolution Time</div>
+          </div>
+        </div>
+        {data.technicianWorkload?.length > 0 && (
+            <div>
+              <div style={{ fontSize:10, color:R.muted, fontWeight:700, letterSpacing:0.6, marginBottom:8 }}>TECHNICIAN WORKLOAD</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={data.technicianWorkload.slice(0,12)} margin={{ top:5, right:5, left:-20, bottom:20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={R.border2} vertical={false}/>
+                  <XAxis dataKey="technicianName" tick={{ fontSize:9, fill:R.muted, angle:-30, textAnchor:'end' }} tickLine={false} axisLine={false} interval={0}/>
+                  <YAxis tick={{ fontSize:9, fill:R.muted }} tickLine={false} axisLine={false}/>
+                  <Tooltip content={<ChartTooltip/>}/>
+                  <Bar dataKey="assignedFaults" name="Assigned Faults" fill={R.blue} radius={[4,4,0,0]} maxBarSize={28}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+        )}
+        <div style={{ display:'flex', gap:20, flexWrap:'wrap' }}>
+          {data.byCategory?.length > 0 && (
+              <div style={{ flex:1, minWidth:200 }}>
+                <div style={{ fontSize:10, color:R.muted, fontWeight:700, letterSpacing:0.6, marginBottom:8 }}>BY CATEGORY</div>
+                {data.byCategory.map((c,i)=>(
+                    <div key={i} style={{ display:'flex', justifyContent:'space-between', fontSize:12, padding:'4px 0' }}>
+                      <span style={{ color:R.muted }}>{c.category}</span>
+                      <span style={{ fontWeight:700, color:R.text }}>{c.count} ({c.percentage?.toFixed(0)}%)</span>
+                    </div>
+                ))}
+              </div>
+          )}
+          {data.byStatus?.length > 0 && (
+              <div style={{ flex:1, minWidth:200 }}>
+                <div style={{ fontSize:10, color:R.muted, fontWeight:700, letterSpacing:0.6, marginBottom:8 }}>BY STATUS</div>
+                {data.byStatus.map((c,i)=>(
+                    <div key={i} style={{ display:'flex', justifyContent:'space-between', fontSize:12, padding:'4px 0' }}>
+                      <span style={{ color:R.muted }}>{c.category}</span>
+                      <span style={{ fontWeight:700, color:R.text }}>{c.count} ({c.percentage?.toFixed(0)}%)</span>
+                    </div>
+                ))}
+              </div>
+          )}
+          {data.geographicDistribution?.length > 0 && (
+              <div style={{ flex:1, minWidth:200 }}>
+                <div style={{ fontSize:10, color:R.muted, fontWeight:700, letterSpacing:0.6, marginBottom:8 }}>BY REGION</div>
+                {data.geographicDistribution.slice(0,8).map((c,i)=>(
+                    <div key={i} style={{ display:'flex', justifyContent:'space-between', fontSize:12, padding:'4px 0' }}>
+                      <span style={{ color:R.muted }}>{c.region}</span>
+                      <span style={{ fontWeight:700, color:R.text }}>{c.faultCount}</span>
+                    </div>
+                ))}
+              </div>
+          )}
+        </div>
+      </div>
+  );
+}
+
+// ─── Material cost display ──────────────────────────────────────────────────────
+function MaterialCostDisplay({ data }) {
+  if (!data) return <Skeleton h={200} r={8}/>;
+  return (
+      <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:10 }}>
+          <div style={{ padding:'14px 16px', borderRadius:10, background:R.bg, border:`1px solid ${R.border}` }}>
+            <div style={{ fontSize:20, fontWeight:800, color:R.green, fontFamily:'Epilogue,sans-serif' }}>{fmtLKR(data.totalFocCost)}</div>
+            <div style={{ fontSize:11, color:R.muted }}>Total FOC Cost</div>
+          </div>
+          <div style={{ padding:'14px 16px', borderRadius:10, background:R.bg, border:`1px solid ${R.border}` }}>
+            <div style={{ fontSize:20, fontWeight:800, color:R.orange, fontFamily:'Epilogue,sans-serif' }}>{fmtLKR(data.totalChargeableCost)}</div>
+            <div style={{ fontSize:11, color:R.muted }}>Total Chargeable Cost</div>
+          </div>
+        </div>
+        {data.mostUsedMaterials?.length > 0 && (
+            <div>
+              <div style={{ fontSize:10, color:R.muted, fontWeight:700, letterSpacing:0.6, marginBottom:8 }}>MOST USED MATERIALS</div>
+              <GenericTable rows={data.mostUsedMaterials}/>
+            </div>
+        )}
+        {data.reorderEstimates?.length > 0 && (
+            <div>
+              <div style={{ fontSize:10, color:R.muted, fontWeight:700, letterSpacing:0.6, marginBottom:8 }}>REORDER ESTIMATES (LOW STOCK)</div>
+              <GenericTable rows={data.reorderEstimates}/>
+            </div>
+        )}
+        {data.wastageAndDamage?.length > 0 && (
+            <div>
+              <div style={{ fontSize:10, color:R.muted, fontWeight:700, letterSpacing:0.6, marginBottom:8 }}>WASTAGE & DAMAGE</div>
+              <GenericTable rows={data.wastageAndDamage}/>
+            </div>
+        )}
+      </div>
+  );
+}
+
+// ─── Geographic demand display ─────────────────────────────────────────────────
+function GeoDemandDisplay({ data }) {
+  if (!data) return <Skeleton h={200} r={8}/>;
+  const CLUSTER_COLORS = [R.blue, R.green, R.orange, R.violet, R.teal];
+  if (!data.clusters?.length) return (
+      <div style={{ padding:'32px 0', textAlign:'center', color:R.muted, fontSize:13 }}>
+        No cluster data available (AI module may be offline)
+      </div>
+  );
+  return (
+      <div>
+        <div style={{ fontSize:11, color:R.muted, marginBottom:10 }}>
+          {data.totalFaults} total faults · source: {data.dataSource}
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))', gap:10 }}>
+          {data.clusters.map((c,i)=>{
+            const col = CLUSTER_COLORS[i % CLUSTER_COLORS.length];
+            return (
+                <div key={i} style={{ padding:'12px 14px', borderRadius:10, background:R.bg, border:`1.5px solid ${col}44` }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:7, marginBottom:7 }}>
+                    <div style={{ width:10, height:10, borderRadius:'50%', background:col }}/>
+                    <span style={{ fontSize:12, fontWeight:800, color:R.text }}>{c.regionName || `Cluster ${i+1}`}</span>
+                  </div>
+                  <div style={{ fontSize:18, fontWeight:800, color:col, fontFamily:'Epilogue,sans-serif' }}>{c.faultCount}</div>
+                  <div style={{ fontSize:10, color:R.muted }}>faults · top: {c.topCategory || 'N/A'}</div>
+                  {c.riskLevel && (
+                      <div style={{
+                        marginTop:6, padding:'2px 7px', borderRadius:4, display:'inline-block',
+                        fontSize:9, fontWeight:800,
+                        background: c.riskLevel==='HIGH' ? R.roseL : c.riskLevel==='MEDIUM' ? R.amberL : R.greenL,
+                        color:      c.riskLevel==='HIGH' ? R.rose  : c.riskLevel==='MEDIUM' ? R.amber  : R.green,
+                      }}>{c.riskLevel} RISK</div>
+                  )}
+                </div>
+            );
+          })}
+        </div>
+      </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // REPORT CARD — expandable with chart preview + export
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -432,9 +727,7 @@ function ReportCard({ template, period, startDate, endDate, onToast, idx }) {
         startDate: period==='CUSTOM' ? startDate : undefined,
         endDate:   period==='CUSTOM' ? endDate   : undefined,
       };
-      const path = format === 'pdf'
-          ? '/api/reports/export/pdf'
-          : '/api/reports/export/excel';
+      const path = { pdf:'/api/reports/export/pdf', excel:'/api/reports/export/excel', csv:'/api/reports/export/csv' }[format];
 
       const res  = await fetch(`${API}${path}`, {
         method: 'POST',
@@ -445,13 +738,16 @@ function ReportCard({ template, period, startDate, endDate, onToast, idx }) {
       if (!res.ok) throw new Error(`${res.status}`);
 
       const blob = await res.blob();
-      const ext  = format === 'pdf' ? 'pdf' : 'xlsx';
+      const ext  = { pdf:'pdf', excel:'xlsx', csv:'csv' }[format];
+      const mime = {
+        pdf:  'application/pdf',
+        excel:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        csv:  'text/csv',
+      }[format];
       downloadBlob(
           blob,
           `slt-${template.id.replace('_','-')}-${Date.now()}.${ext}`,
-          format === 'pdf'
-              ? 'application/pdf'
-              : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          mime
       );
       onToast(`${template.title} exported as ${format.toUpperCase()}`, 'success');
     } catch (e) {
@@ -470,6 +766,27 @@ function ReportCard({ template, period, startDate, endDate, onToast, idx }) {
 
     if (template.chartType === 'kv') return <FinancialDisplay data={data}/>;
     if (template.chartType === 'pie') return <SatisfactionDisplay data={data}/>;
+    if (template.chartType === 'daily_summary') return <DailyFaultSummaryDisplay data={data}/>;
+    if (template.chartType === 'material_cost') return <MaterialCostDisplay data={data}/>;
+    if (template.chartType === 'geo_demand') return <GeoDemandDisplay data={data}/>;
+    if (template.chartType === 'table') return <GenericTable rows={Array.isArray(data) ? data : []}/>;
+    if (template.chartType === 'ai_forecast') {
+      const historical = (data?.historical||[]).map(d=>({ date:d.date, actual:d.predictedFaults, isForecast:false }));
+      const forecast    = (data?.forecast||[]).map(d=>({
+        date:d.date, forecast:d.predictedFaults, upperBound:d.upperBound, lowerBound:d.lowerBound, isForecast:true,
+      }));
+      const combined = [...historical, ...forecast];
+      return (
+          <div>
+            {data && (
+                <div style={{ fontSize:11, color:R.muted, marginBottom:8 }}>
+                  Accuracy: {data.accuracy ? `${data.accuracy.toFixed(1)}%` : '—'} · MAE: {data.mae?.toFixed(2) ?? '—'} · source: {data.dataSource}
+                </div>
+            )}
+            <AIPredictionChart data={combined} loading={false}/>
+          </div>
+      );
+    }
 
     const chartData = Array.isArray(data) ? data : [];
     if (!chartData.length) return (
@@ -593,6 +910,9 @@ function ReportCard({ template, period, startDate, endDate, onToast, idx }) {
             </Btn>
             <Btn variant="green" onClick={()=>handleExport('excel')} loading={exporting==='excel'} sx={{ fontSize:11, padding:'6px 12px' }}>
               📊 Excel
+            </Btn>
+            <Btn variant="teal" onClick={()=>handleExport('csv')} loading={exporting==='csv'} sx={{ fontSize:11, padding:'6px 12px' }}>
+              📃 CSV
             </Btn>
           </div>
 
@@ -954,10 +1274,13 @@ export default function ReportsPage() {
         });
         if (!res.ok) throw new Error(`${res.status}`);
         const blob = await res.blob();
-        const ext  = format==='pdf'?'pdf':'xlsx';
-        downloadBlob(blob, `slt-${t.id}-${Date.now()}.${ext}`,
-            format==='pdf'?'application/pdf':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        );
+        const ext  = { pdf:'pdf', excel:'xlsx', csv:'csv' }[format];
+        const mime = {
+          pdf:  'application/pdf',
+          excel:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          csv:  'text/csv',
+        }[format];
+        downloadBlob(blob, `slt-${t.id}-${Date.now()}.${ext}`, mime);
         success++;
       } catch { fail++; }
     }
@@ -1015,6 +1338,9 @@ export default function ReportsPage() {
             </Btn>
             <Btn variant="green" onClick={()=>exportAll('excel')} loading={exAll==='excel'}>
               📊 Export All Excel
+            </Btn>
+            <Btn variant="teal" onClick={()=>exportAll('csv')} loading={exAll==='csv'}>
+              📃 Export All CSV
             </Btn>
           </div>
         </div>

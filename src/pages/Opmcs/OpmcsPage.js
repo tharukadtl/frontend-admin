@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:8080';
 const tok = () => localStorage.getItem('accessToken');
@@ -10,6 +11,21 @@ const req = (method, path, body) =>
 const get  = p      => req('GET',  p);
 const post = (p, b) => req('POST', p, b);
 const put  = (p, b) => req('PUT',  p, b);
+
+// The 9 real Opmc.Province enum values (fieldops backend) — a controlled list, not free text,
+// so a value sent here always resolves cleanly server-side (no ambiguous/unparseable input possible).
+const PROVINCES = [
+  { value:'WESTERN',        label:'Western' },
+  { value:'CENTRAL',        label:'Central' },
+  { value:'SOUTHERN',       label:'Southern' },
+  { value:'NORTHERN',       label:'Northern' },
+  { value:'EASTERN',        label:'Eastern' },
+  { value:'NORTH_WESTERN',  label:'North Western' },
+  { value:'NORTH_CENTRAL',  label:'North Central' },
+  { value:'UVA',            label:'Uva' },
+  { value:'SABARAGAMUWA',   label:'Sabaragamuwa' },
+];
+const provinceLabel = v => PROVINCES.find(p => p.value === v)?.label || v || '';
 
 const B = {
   bg:'#FAFAF7', surface:'#FFFFFF', s2:'#F4F2EC', border:'#D6D2C4', b2:'#E8E5DA',
@@ -25,28 +41,28 @@ const B = {
 };
 
 const Skel = ({h=14,w='100%',r=6}) => (
-    <div style={{height:h,width:w,borderRadius:r,background:`linear-gradient(90deg,${B.s2} 25%,${B.border} 50%,${B.s2} 75%)`,backgroundSize:'400% 100%',animation:'br-shim 1.5s ease infinite'}}/>
+    <div style={{height:h,width:w,borderRadius:r,background:`linear-gradient(90deg,${B.s2} 25%,${B.border} 50%,${B.s2} 75%)`,backgroundSize:'400% 100%',animation:'opmc-shim 1.5s ease infinite'}}/>
 );
 
 const Toast = ({msg,type,onDone}) => {
   useEffect(()=>{const t=setTimeout(onDone,3000);return()=>clearTimeout(t);},[onDone]);
-  return <div style={{position:'fixed',bottom:24,right:24,zIndex:3000,background:B.surface,border:`2px solid ${type==='success'?B.forest:B.red}`,borderRadius:10,padding:'10px 18px',display:'flex',alignItems:'center',gap:8,fontSize:13,color:B.text,boxShadow:'0 4px 20px rgba(0,0,0,0.1)',animation:'br-fin 0.2s ease'}}>{type==='success'?'✅':'❌'} {msg}</div>;
+  return <div style={{position:'fixed',bottom:24,right:24,zIndex:3000,background:B.surface,border:`2px solid ${type==='success'?B.forest:B.red}`,borderRadius:10,padding:'10px 18px',display:'flex',alignItems:'center',gap:8,fontSize:13,color:B.text,boxShadow:'0 4px 20px rgba(0,0,0,0.1)',animation:'opmc-fin 0.2s ease'}}>{type==='success'?'✅':'❌'} {msg}</div>;
 };
 
-// ─── Branch Form Modal ────────────────────────────────────────────────────────
-function BranchModal({ branch, open, onClose, onSuccess }) {
-  const isEdit = !!branch;
-  const init = { name:'', code:'', address:'', region:'', phone:'', email:'' };
+// ─── OPMC Form Modal ──────────────────────────────────────────────────────────
+function OpmcModal({ opmc, open, onClose, onSuccess }) {
+  const isEdit = !!opmc;
+  const init = { name:'', code:'', address:'', province:'', phone:'', email:'' };
   const [form, setForm] = useState(init);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) setForm(isEdit ? {
-      name:branch.name||'', code:branch.code||'',
-      address:branch.address||'', region:branch.region||'',
-      phone:branch.phone||'', email:branch.email||'',
+      name:opmc.name||'', code:opmc.code||'',
+      address:opmc.address||'', province:opmc.province||'',
+      phone:opmc.phone||'', email:opmc.email||'',
     } : init);
-  }, [open, branch]);
+  }, [open, opmc]);
 
   useEffect(() => {
     const fn = e => e.key==='Escape' && onClose();
@@ -61,9 +77,9 @@ function BranchModal({ branch, open, onClose, onSuccess }) {
     if (!form.name.trim()) return;
     setSaving(true);
     try {
-      if (isEdit) await put(`/api/branches/${branch.id}`, form);
-      else await post('/api/branches', form);
-      onSuccess(isEdit ? 'Branch updated' : 'Branch created', 'success');
+      if (isEdit) await put(`/api/opmcs/${opmc.id}`, form);
+      else await post('/api/opmcs', form);
+      onSuccess(isEdit ? 'OPMC updated' : 'OPMC created', 'success');
       onClose();
     } catch { onSuccess('Save failed', 'error'); }
     finally { setSaving(false); }
@@ -79,20 +95,37 @@ function BranchModal({ branch, open, onClose, onSuccess }) {
       </div>
   );
 
+  // Controlled dropdown, not free text — a value picked here always resolves cleanly on the
+  // backend (Opmc.Province.valueOf() on an exact enum token), unlike the free-text "Region" field
+  // this replaced, which could silently save as no-province on anything that wasn't an exact match
+  // (including the field's own former placeholder text, "Western Province").
+  const provinceSelect = () => (
+      <div>
+        <div style={{ fontSize:10, fontWeight:800, color:B.muted, letterSpacing:0.6, textTransform:'uppercase', marginBottom:4 }}>Province</div>
+        <select value={form.province} onChange={e => f('province')(e.target.value)}
+                style={{ width:'100%', background:B.s2, border:`1.5px solid ${B.border}`, borderRadius:8, padding:'9px 12px', fontSize:12, color:B.text, outline:'none', transition:'border-color 0.13s' }}
+                onFocus={e=>e.target.style.borderColor=B.forest} onBlur={e=>e.target.style.borderColor=B.border}
+        >
+          <option value="">— Select Province —</option>
+          {PROVINCES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </select>
+      </div>
+  );
+
   return (
-      <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:'fixed',inset:0,zIndex:1000,background:'rgba(28,28,20,0.55)',backdropFilter:'blur(4px)',display:'flex',alignItems:'center',justifyContent:'center',padding:24,animation:'br-fin 0.18s ease'}}>
-        <div style={{background:B.surface,borderRadius:16,width:'100%',maxWidth:520,border:`1px solid ${B.border}`,boxShadow:'0 20px 60px rgba(0,0,0,0.15)',animation:'br-sld 0.2s ease'}}>
+      <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:'fixed',inset:0,zIndex:1000,background:'rgba(28,28,20,0.55)',backdropFilter:'blur(4px)',display:'flex',alignItems:'center',justifyContent:'center',padding:24,animation:'opmc-fin 0.18s ease'}}>
+        <div style={{background:B.surface,borderRadius:16,width:'100%',maxWidth:520,border:`1px solid ${B.border}`,boxShadow:'0 20px 60px rgba(0,0,0,0.15)',animation:'opmc-sld 0.2s ease'}}>
           <div style={{padding:'18px 22px 14px',borderBottom:`1px solid ${B.border}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-            <div style={{fontSize:16,fontWeight:800,color:B.text}}>{isEdit?`Edit — ${branch.name}`:'Add New Branch'}</div>
+            <div style={{fontSize:16,fontWeight:800,color:B.text}}>{isEdit?`Edit — ${opmc.name}`:'Add New OPMC'}</div>
             <button onClick={onClose} style={{background:'none',border:'none',color:B.muted,fontSize:20,cursor:'pointer'}}>×</button>
           </div>
           <div style={{padding:'20px 22px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-            {inp('Branch Name *','name','e.g. Colombo North','text',true)}
-            {inp('Branch Code','code','e.g. COL-N')}
-            {inp('Region','region','e.g. Western Province')}
+            {inp('OPMC Name *','name','e.g. Colombo North','text',true)}
+            {inp('OPMC Code','code','e.g. COL-N')}
+            {provinceSelect()}
             {inp('Address','address','Full street address…','text',true)}
             {inp('Phone','phone','e.g. 011-2345678','tel')}
-            {inp('Email','email','branch@slt.lk','email')}
+            {inp('Email','email','opmc@slt.lk','email')}
           </div>
           <div style={{padding:'14px 22px',borderTop:`1px solid ${B.border}`,display:'flex',gap:8,justifyContent:'flex-end'}}>
             <button onClick={onClose} style={{padding:'8px 16px',borderRadius:8,border:`1.5px solid ${B.border}`,background:'transparent',color:B.text,cursor:'pointer',fontSize:12,fontWeight:600}}>Cancel</button>
@@ -103,28 +136,29 @@ function BranchModal({ branch, open, onClose, onSuccess }) {
   );
 }
 
-// ─── Branch Team Detail ───────────────────────────────────────────────────────
-function BranchTeam({ branch, onEdit, onClose }) {
+// ─── OPMC Team Detail ─────────────────────────────────────────────────────────
+function OpmcTeam({ opmc, onEdit, onClose }) {
+  const navigate = useNavigate();
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!branch) return;
+    if (!opmc) return;
     setLoading(true);
     get('/api/users').then(d => {
       const all = Array.isArray(d) ? d : d?.content || [];
       setMembers(all.filter(u =>
-          (u.branch?.id === branch.id || u.branchId === branch.id) &&
+          (u.opmc?.id === opmc.id || u.opmcId === opmc.id) &&
           (u.role === 'TECHNICIAN' || u.role === 'TEAM_LEAD')
       ));
     }).catch(() => {}).finally(() => setLoading(false));
-  }, [branch?.id]);
+  }, [opmc?.id]);
 
-  if (!branch) return (
+  if (!opmc) return (
       <div style={{ background:B.surface, borderRadius:14, border:`1px solid ${B.border}`, padding:'40px 24px', textAlign:'center', color:B.muted, position:'sticky', top:24 }}>
         <div style={{ fontSize:40, marginBottom:10 }}>🏢</div>
-        <div style={{ fontSize:13, fontWeight:600, color:B.text, marginBottom:4 }}>Select a branch</div>
-        <div style={{ fontSize:12 }}>View team members and branch details</div>
+        <div style={{ fontSize:13, fontWeight:600, color:B.text, marginBottom:4 }}>Select an OPMC</div>
+        <div style={{ fontSize:12 }}>View team members and OPMC details</div>
       </div>
   );
 
@@ -154,25 +188,26 @@ function BranchTeam({ branch, onEdit, onClose }) {
           <div>
             <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
               <span style={{ fontSize:20 }}>🏢</span>
-              <div style={{ fontSize:15, fontWeight:800, color:B.text }}>{branch.name}</div>
+              <div style={{ fontSize:15, fontWeight:800, color:B.text }}>{opmc.name}</div>
             </div>
-            {branch.code && (
-                <span style={{ fontSize:9, padding:'1px 6px', borderRadius:4, background:B.goldL, color:B.gold, fontWeight:800, marginRight:6 }}>{branch.code}</span>
+            {opmc.code && (
+                <span style={{ fontSize:9, padding:'1px 6px', borderRadius:4, background:B.goldL, color:B.gold, fontWeight:800, marginRight:6 }}>{opmc.code}</span>
             )}
-            <span style={{ fontSize:11, color:B.muted }}>{branch.region || 'No region set'}</span>
+            <span style={{ fontSize:11, color:B.muted }}>{provinceLabel(opmc.province) || 'No province set'}</span>
           </div>
           <div style={{ display:'flex', gap:6 }}>
-            <button onClick={() => onEdit(branch)} style={{ padding:'5px 12px', borderRadius:6, border:`1px solid ${B.forest}`, background:B.forestL, color:B.forest, cursor:'pointer', fontSize:11, fontWeight:700 }}>✏️ Edit</button>
+            <button onClick={() => navigate(`/work-groups?opmcId=${opmc.id}`)} style={{ padding:'5px 12px', borderRadius:6, border:`1px solid ${B.sky}`, background:B.skyL, color:B.sky, cursor:'pointer', fontSize:11, fontWeight:700 }}>🧭 Work Groups</button>
+            <button onClick={() => onEdit(opmc)} style={{ padding:'5px 12px', borderRadius:6, border:`1px solid ${B.forest}`, background:B.forestL, color:B.forest, cursor:'pointer', fontSize:11, fontWeight:700 }}>✏️ Edit</button>
             <button onClick={onClose} style={{ background:'none', border:'none', color:B.muted, fontSize:18, cursor:'pointer', padding:'0 4px' }}>×</button>
           </div>
         </div>
 
         {/* Contact info */}
-        {(branch.address || branch.phone || branch.email) && (
+        {(opmc.address || opmc.phone || opmc.email) && (
             <div style={{ padding:'12px 18px', borderBottom:`1px solid ${B.b2}` }}>
-              {branch.address && <div style={{ fontSize:11, color:B.muted, marginBottom:4 }}>📍 {branch.address}</div>}
-              {branch.phone   && <div style={{ fontSize:11, color:B.muted, marginBottom:4 }}>📞 {branch.phone}</div>}
-              {branch.email   && <div style={{ fontSize:11, color:B.sky }}>✉️ {branch.email}</div>}
+              {opmc.address && <div style={{ fontSize:11, color:B.muted, marginBottom:4 }}>📍 {opmc.address}</div>}
+              {opmc.phone   && <div style={{ fontSize:11, color:B.muted, marginBottom:4 }}>📞 {opmc.phone}</div>}
+              {opmc.email   && <div style={{ fontSize:11, color:B.sky }}>✉️ {opmc.email}</div>}
             </div>
         )}
 
@@ -189,7 +224,7 @@ function BranchTeam({ branch, onEdit, onClose }) {
               </div>
           ) : members.length === 0 ? (
               <div style={{ textAlign:'center', padding:'20px 0', color:B.muted, fontSize:12 }}>
-                No technicians assigned to this branch
+                No technicians assigned to this OPMC
               </div>
           ) : (
               ROLE_ORDER.filter(r => byRole[r]?.length).map(role => (
@@ -235,11 +270,11 @@ function BranchTeam({ branch, onEdit, onClose }) {
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export default function BranchesPage() {
-  const [branches,   setBranches]   = useState([]);
+export default function OpmcsPage() {
+  const [opmcs,     setOpmcs]     = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [selected,   setSelected]   = useState(null);
-  const [editBranch, setEditBranch] = useState(null);
+  const [editOpmc,   setEditOpmc]   = useState(null);
   const [formOpen,   setFormOpen]   = useState(false);
   const [search,     setSearch]     = useState('');
   const [toast,      setToast]      = useState(null);
@@ -247,61 +282,61 @@ export default function BranchesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const d = await get('/api/branches');
-      setBranches(Array.isArray(d) ? d : d?.content || []);
+      const d = await get('/api/opmcs');
+      setOpmcs(Array.isArray(d) ? d : d?.content || []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const filtered = branches.filter(b => {
+  const filtered = opmcs.filter(o => {
     if (!search) return true;
     const q = search.toLowerCase();
-    return b.name?.toLowerCase().includes(q) ||
-        b.region?.toLowerCase().includes(q) ||
-        b.code?.toLowerCase().includes(q);
+    return o.name?.toLowerCase().includes(q) ||
+        provinceLabel(o.province).toLowerCase().includes(q) ||
+        o.code?.toLowerCase().includes(q);
   });
 
   useEffect(() => {
-    const id = 'br-css'; if (document.getElementById(id)) return;
+    const id = 'opmc-css'; if (document.getElementById(id)) return;
     const s = document.createElement('style'); s.id = id;
     s.innerHTML = `
       @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap');
-      @keyframes br-shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
-      @keyframes br-fin{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
-      @keyframes br-sld{from{opacity:0;transform:translateY(-10px)scale(0.98)}to{opacity:1;transform:none}}
-      .br-page *{box-sizing:border-box;font-family:'Outfit',sans-serif;}
-      .br-card{transition:all 0.15s;cursor:pointer;}
-      .br-card:hover{box-shadow:0 6px 24px rgba(0,0,0,0.1)!important;transform:translateY(-2px)!important;}
+      @keyframes opmc-shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+      @keyframes opmc-fin{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+      @keyframes opmc-sld{from{opacity:0;transform:translateY(-10px)scale(0.98)}to{opacity:1;transform:none}}
+      .opmc-page *{box-sizing:border-box;font-family:'Outfit',sans-serif;}
+      .opmc-card{transition:all 0.15s;cursor:pointer;}
+      .opmc-card:hover{box-shadow:0 6px 24px rgba(0,0,0,0.1)!important;transform:translateY(-2px)!important;}
     `;
     document.head.appendChild(s);
   }, []);
 
   return (
-      <div className="br-page" style={{ background:B.bg, minHeight:'100vh', padding:'28px 32px' }}>
+      <div className="opmc-page" style={{ background:B.bg, minHeight:'100vh', padding:'28px 32px' }}>
 
         {/* Header */}
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24 }}>
           <div>
-            <h1 style={{ margin:0, fontSize:24, fontWeight:800, color:B.text }}>Branches</h1>
+            <h1 style={{ margin:0, fontSize:24, fontWeight:800, color:B.text }}>OPMCs</h1>
             <div style={{ fontSize:12, color:B.muted, marginTop:3 }}>
-              {branches.length} SLT branches across Sri Lanka
+              {opmcs.length} SLT OPMCs across Sri Lanka
             </div>
           </div>
           <div style={{ display:'flex', gap:8 }}>
             <button onClick={load} style={{ padding:'8px 14px', borderRadius:8, border:`1.5px solid ${B.border}`, background:B.surface, cursor:'pointer', fontSize:12, fontWeight:700, color:B.text }}>🔄</button>
-            <button onClick={() => { setEditBranch(null); setFormOpen(true); }} style={{
+            <button onClick={() => { setEditOpmc(null); setFormOpen(true); }} style={{
               padding:'8px 18px', borderRadius:8, border:'none',
               background:B.forest, color:B.white, cursor:'pointer', fontSize:12, fontWeight:700,
-            }}>➕ Add Branch</button>
+            }}>➕ Add OPMC</button>
           </div>
         </div>
 
         {/* Search */}
         <div style={{ position:'relative', marginBottom:20, maxWidth:400 }}>
           <span style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:B.dim }}>🔍</span>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name, code, region…"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name, code, province…"
                  style={{ width:'100%', background:B.surface, border:`1.5px solid ${B.border}`, borderRadius:8, padding:'8px 10px 8px 30px', fontSize:12, color:B.text, outline:'none' }}
                  onFocus={e => e.target.style.borderColor = B.forest}
                  onBlur={e => e.target.style.borderColor = B.border}
@@ -311,7 +346,7 @@ export default function BranchesPage() {
         {/* Two-col layout */}
         <div style={{ display:'grid', gridTemplateColumns:'1fr 360px', gap:20, alignItems:'start' }}>
 
-          {/* Branch grid */}
+          {/* OPMC grid */}
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))', gap:12 }}>
             {loading ? [...Array(6)].map((_,i) => (
                 <div key={i} style={{ background:B.surface, borderRadius:12, padding:18, border:`1px solid ${B.border}`, display:'flex', flexDirection:'column', gap:10 }}>
@@ -320,16 +355,16 @@ export default function BranchesPage() {
             )) : filtered.length === 0 ? (
                 <div style={{ gridColumn:'1/-1', textAlign:'center', padding:'48px 24px', color:B.muted }}>
                   <div style={{ fontSize:36, marginBottom:8 }}>🏢</div>
-                  No branches found
+                  No OPMCs found
                 </div>
-            ) : filtered.map((br, i) => (
-                <div key={br.id||i} className="br-card"
-                     onClick={() => setSelected(selected?.id === br.id ? null : br)}
+            ) : filtered.map((o, i) => (
+                <div key={o.id||i} className="opmc-card"
+                     onClick={() => setSelected(selected?.id === o.id ? null : o)}
                      style={{
                        background:B.surface, borderRadius:12, padding:18,
-                       border:`1.5px solid ${selected?.id===br.id ? B.forest : B.border}`,
-                       boxShadow: selected?.id===br.id ? `0 4px 20px ${B.forest}22` : '0 1px 4px rgba(0,0,0,0.04)',
-                       animation:`br-fin 0.3s ease ${i*0.04}s both`,
+                       border:`1.5px solid ${selected?.id===o.id ? B.forest : B.border}`,
+                       boxShadow: selected?.id===o.id ? `0 4px 20px ${B.forest}22` : '0 1px 4px rgba(0,0,0,0.04)',
+                       animation:`opmc-fin 0.3s ease ${i*0.04}s both`,
                      }}
                 >
                   <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
@@ -340,28 +375,28 @@ export default function BranchesPage() {
                     }}>🏢</div>
                     <div style={{ flex:1, minWidth:0 }}>
                       <div style={{ fontSize:14, fontWeight:800, color:B.text, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-                        {br.name}
+                        {o.name}
                       </div>
-                      {br.code && (
+                      {o.code && (
                           <span style={{ fontSize:9, padding:'1px 5px', borderRadius:4, background:B.goldL, color:B.gold, fontWeight:800 }}>
-                      {br.code}
+                      {o.code}
                     </span>
                       )}
                     </div>
                   </div>
 
-                  {br.region && <div style={{ fontSize:11, color:B.muted, marginBottom:4 }}>📍 {br.region}</div>}
-                  {br.phone  && <div style={{ fontSize:11, color:B.muted, marginBottom:8 }}>📞 {br.phone}</div>}
+                  {o.province && <div style={{ fontSize:11, color:B.muted, marginBottom:4 }}>📍 {provinceLabel(o.province)}</div>}
+                  {o.phone  && <div style={{ fontSize:11, color:B.muted, marginBottom:8 }}>📞 {o.phone}</div>}
 
                   <div style={{ display:'flex', gap:6, justifyContent:'flex-end', paddingTop:6, borderTop:`1px solid ${B.b2}` }}>
-                    <button onClick={e => { e.stopPropagation(); setEditBranch(br); setFormOpen(true); }} style={{
+                    <button onClick={e => { e.stopPropagation(); setEditOpmc(o); setFormOpen(true); }} style={{
                       padding:'4px 10px', borderRadius:6, border:`1px solid ${B.border}`,
                       background:'none', cursor:'pointer', fontSize:10, color:B.muted, transition:'all 0.12s',
                     }}
                             onMouseEnter={e => { e.currentTarget.style.borderColor=B.forest; e.currentTarget.style.color=B.forest; }}
                             onMouseLeave={e => { e.currentTarget.style.borderColor=B.border; e.currentTarget.style.color=B.muted; }}
                     >✏️ Edit</button>
-                    <button onClick={e => { e.stopPropagation(); setSelected(br); }} style={{
+                    <button onClick={e => { e.stopPropagation(); setSelected(o); }} style={{
                       padding:'4px 10px', borderRadius:6,
                       border:`1px solid ${B.forest}55`, background:B.forestL,
                       cursor:'pointer', fontSize:10, color:B.forest, fontWeight:700,
@@ -373,17 +408,17 @@ export default function BranchesPage() {
 
           {/* Detail panel */}
           <div>
-            <BranchTeam
-                branch={selected}
-                onEdit={br => { setEditBranch(br); setFormOpen(true); }}
+            <OpmcTeam
+                opmc={selected}
+                onEdit={o => { setEditOpmc(o); setFormOpen(true); }}
                 onClose={() => setSelected(null)}
             />
           </div>
         </div>
 
-        <BranchModal
-            branch={editBranch} open={formOpen}
-            onClose={() => { setFormOpen(false); setEditBranch(null); load(); }}
+        <OpmcModal
+            opmc={editOpmc} open={formOpen}
+            onClose={() => { setFormOpen(false); setEditOpmc(null); load(); }}
             onSuccess={(msg, type) => setToast({ msg, type })}
         />
         {toast && <Toast msg={toast.msg} type={toast.type} onDone={() => setToast(null)}/>}

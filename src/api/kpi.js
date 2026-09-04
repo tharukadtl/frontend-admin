@@ -17,9 +17,9 @@ const kpiAPI = {
   getTechnicianSummary: (technicianId, from = null, to = null) =>
     api.get(`/kpi/technician/${technicianId}/summary`, { params: { from, to } }),
 
-  // GET /kpi/branch/{id}?date=X
-  getBranchScores: (branchId, date = null) =>
-    api.get(`/kpi/branch/${branchId}`, { params: date ? { date } : {} }),
+  // GET /kpi/opmc/{id}?date=X
+  getOpmcScores: (opmcId, date = null) =>
+    api.get(`/kpi/opmc/${opmcId}`, { params: date ? { date } : {} }),
 
   // POST /kpi/calculate (Admin)
   triggerCalculation: () =>

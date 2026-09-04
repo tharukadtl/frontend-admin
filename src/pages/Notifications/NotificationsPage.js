@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNotificationSocket } from '../../context/NotificationSocketContext';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:8080';
 const tok = () => localStorage.getItem('accessToken');
@@ -27,7 +28,7 @@ const N = {
 
 const TYPE_CFG = {
   FAULT_ASSIGNED:       { icon:'🔧', color:N.cyan,   bg:N.cyanL,   label:'Job Assigned'      },
-  FAULT_CREATED:        { icon:'📋', color:N.cyan,   bg:N.cyanL,   label:'New Fault'         },
+  FAULT_REPORTED:       { icon:'📋', color:N.cyan,   bg:N.cyanL,   label:'New Fault'         },
   FAULT_COMPLETED:      { icon:'✅', color:N.green,  bg:N.greenL,  label:'Completed'         },
   FAULT_ESCALATED:      { icon:'⚠️', color:N.red,    bg:N.redL,    label:'Escalated'         },
   FAULT_UPDATE:         { icon:'🔄', color:N.amber,  bg:N.amberL,  label:'Fault Update'      },
@@ -66,6 +67,7 @@ export default function NotificationsPage() {
   const [fRead,   setFRead]   = useState('ALL');
   const [search,  setSearch]  = useState('');
   const [marking, setMarking] = useState(new Set());
+  const { liveNotifications, connected } = useNotificationSocket();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -78,10 +80,25 @@ export default function NotificationsPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Live push notifications (e.g. payment submitted) arrive over the admin
+  // WebSocket and are never persisted server-side — merge them into the
+  // list as they come in rather than waiting for the next manual refresh.
+  useEffect(() => {
+    if (liveNotifications.length === 0) return;
+    setNotifs(prev => {
+      const existingIds = new Set(prev.map(n => n.id));
+      const toAdd = liveNotifications.filter(n => !existingIds.has(n.id));
+      return toAdd.length ? [...toAdd, ...prev] : prev;
+    });
+  }, [liveNotifications]);
+
   const markRead = async (id) => {
     setMarking(s => new Set([...s, id]));
     try {
-      await post(`/api/notifications/${id}/read`, {});
+      // Live-pushed notifications have a synthetic id and no backend row.
+      if (!String(id).startsWith('ws-')) {
+        await post(`/api/notifications/${id}/read`, {});
+      }
       setNotifs(ns => ns.map(n => n.id === id ? { ...n, read:true, isRead:true } : n));
     } catch {}
     finally { setMarking(s => { const ns = new Set(s); ns.delete(id); return ns; }); }
@@ -143,6 +160,16 @@ export default function NotificationsPage() {
                     boxShadow:`0 0 10px ${N.cyan}66`,
                   }}>{unreadCount} new</span>
               )}
+              <span style={{
+                display:'flex', alignItems:'center', gap:5,
+                fontSize:10, fontWeight:700, color: connected ? N.green : N.muted,
+              }}>
+                <span style={{
+                  width:6, height:6, borderRadius:'50%',
+                  background: connected ? N.green : N.muted,
+                }} />
+                {connected ? 'LIVE' : 'OFFLINE'}
+              </span>
             </div>
             <div style={{ fontSize:12, color:N.muted }}>{notifs.length} total notifications</div>
           </div>

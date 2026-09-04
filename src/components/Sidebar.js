@@ -1,9 +1,11 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useNotificationSocket } from '../context/NotificationSocketContext';
 
 export default function Sidebar() {
   const { user, logout, isAdmin, isSuperAdmin } = useAuth();
+  const { liveUnreadCount, clearLiveUnread, connected } = useNotificationSocket();
 
   const linkStyle = {
     display: 'flex',
@@ -63,6 +65,28 @@ export default function Sidebar() {
           </NavLink>
         )}
 
+        {/* SRS 5.6.7 — Model Training is its own page, not a Reports tab (Admin only) */}
+        {isAdmin() && (
+          <NavLink
+            to="/model-training"
+            style={({ isActive }) => (isActive ? activeLinkStyle : linkStyle)}
+          >
+            <span style={{ fontSize: 20 }}>🧠</span>
+            <span>Model Training</span>
+          </NavLink>
+        )}
+
+        {/* SRS 5.6.8 — Resource Planning (FR-33 Stage 3a), own page like Model Training (Admin only) */}
+        {isAdmin() && (
+          <NavLink
+            to="/resource-planning"
+            style={({ isActive }) => (isActive ? activeLinkStyle : linkStyle)}
+          >
+            <span style={{ fontSize: 20 }}>🧰</span>
+            <span>Resource Planning</span>
+          </NavLink>
+        )}
+
         <NavLink
           to="/faults"
           style={({ isActive }) => (isActive ? activeLinkStyle : linkStyle)}
@@ -91,11 +115,11 @@ export default function Sidebar() {
 
         {isSuperAdmin() && (
           <NavLink
-            to="/branches"
+            to="/opmcs"
             style={({ isActive }) => (isActive ? activeLinkStyle : linkStyle)}
           >
             <span style={{ fontSize: 20 }}>🏢</span>
-            <span>Branches</span>
+            <span>OPMCs</span>
           </NavLink>
         )}
 
@@ -125,6 +149,28 @@ export default function Sidebar() {
           </NavLink>
         )}
 
+        {/* SRS 5.5.3 — OPMC pool -> Work Group allocation */}
+        {isAdmin() && (
+          <NavLink
+            to="/resource-allocation"
+            style={({ isActive }) => (isActive ? activeLinkStyle : linkStyle)}
+          >
+            <span style={{ fontSize: 20 }}>📦</span>
+            <span>Resource Allocation</span>
+          </NavLink>
+        )}
+
+        {/* Critical #2 — SRS 5.5.6 Work Group creation/edit/reassignment of Team Lead */}
+        {isAdmin() && (
+          <NavLink
+            to="/work-groups"
+            style={({ isActive }) => (isActive ? activeLinkStyle : linkStyle)}
+          >
+            <span style={{ fontSize: 20 }}>🧭</span>
+            <span>Work Groups</span>
+          </NavLink>
+        )}
+
         <NavLink
           to="/kpi"
           style={({ isActive }) => (isActive ? activeLinkStyle : linkStyle)}
@@ -133,12 +179,43 @@ export default function Sidebar() {
           <span>KPI</span>
         </NavLink>
 
+        {isAdmin() && (
+          <NavLink
+            to="/reports"
+            style={({ isActive }) => (isActive ? activeLinkStyle : linkStyle)}
+          >
+            <span style={{ fontSize: 20 }}>📑</span>
+            <span>Reports</span>
+          </NavLink>
+        )}
+
         <NavLink
           to="/notifications"
-          style={({ isActive }) => (isActive ? activeLinkStyle : linkStyle)}
+          onClick={clearLiveUnread}
+          style={({ isActive }) => ({
+            ...(isActive ? activeLinkStyle : linkStyle),
+            justifyContent: 'space-between',
+          })}
         >
-          <span style={{ fontSize: 20 }}>🔔</span>
-          <span>Notifications</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 20 }}>🔔</span>
+            <span>Notifications</span>
+          </span>
+          {liveUnreadCount > 0 && (
+            <span style={{
+              background: '#c62828', color: '#fff', borderRadius: 20,
+              fontSize: 11, fontWeight: 700, padding: '2px 7px', minWidth: 18,
+              textAlign: 'center',
+            }}>
+              {liveUnreadCount > 99 ? '99+' : liveUnreadCount}
+            </span>
+          )}
+          {liveUnreadCount === 0 && (
+            <span title={connected ? 'Live updates connected' : 'Live updates offline'} style={{
+              width: 7, height: 7, borderRadius: '50%',
+              background: connected ? '#2e7d32' : '#bbb',
+            }} />
+          )}
         </NavLink>
       </nav>
 

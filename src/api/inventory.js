@@ -30,8 +30,8 @@ const inventoryAPI = {
   getLowStockAlerts: () =>
     api.get('/inventory/alerts'),
 
-  getLowStockByBranch: (branchId) =>
-    api.get(`/inventory/alerts/branch/${branchId}`),
+  getLowStockByOpmc: (opmcId) =>
+    api.get(`/inventory/alerts/opmc/${opmcId}`),
 
   // Material Requests
   createRequest: (materialId, quantityRequested, reason) =>
@@ -40,8 +40,8 @@ const inventoryAPI = {
   getPendingRequests: () =>
     api.get('/inventory/requests/pending'),
 
-  getRequestsByBranch: (branchId) =>
-    api.get(`/inventory/requests/branch/${branchId}`),
+  getRequestsByOpmc: (opmcId) =>
+    api.get(`/inventory/requests/opmc/${opmcId}`),
 
   reviewRequest: (id, decision, reason = '') =>
     api.patch(`/inventory/requests/${id}/review`, { decision, reason }),

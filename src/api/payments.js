@@ -21,9 +21,9 @@ const paymentsAPI = {
   getApprovals: (id) =>
     api.get(`/payments/${id}/approvals`),
 
-  // GET /payments/branch/{branchId}
-  getByBranch: (branchId) =>
-    api.get(`/payments/branch/${branchId}`),
+  // GET /payments/opmc/{opmcId}
+  getByOpmc: (opmcId) =>
+    api.get(`/payments/opmc/${opmcId}`),
 };
 
 export default paymentsAPI;

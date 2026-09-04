@@ -508,13 +508,19 @@ function FaultDetailModal({ fault, workGroups, currentUser, open, onClose, onSuc
     }
   }, [fault?.id, tab, open]);
 
-  // Photos are served from the backend's static /uploads/** route, not the /api host —
-  // resolve relative paths against the API's origin, not its /api base path.
+  // Photos are served from the backend's /uploads/** route (now an authenticated,
+  // per-file-authorized controller, not the old unauthenticated static handler — see
+  // QA_Compliance_Consolidated_Report.md Stage G) — not the /api host, so resolve
+  // relative paths against the API's origin, not its /api base path. An <img> tag can't
+  // attach an Authorization header, so the current JWT rides along as ?token= instead —
+  // SecurityConfig's jwtAuthFilter accepts either.
   const photoUrl = (p) => {
     const path = typeof p === 'string' ? p : (p?.url || p?.path || '');
     if (!path) return '';
     if (/^https?:\/\//i.test(path)) return path;
-    return `${API}${path.startsWith('/') ? '' : '/'}${path}`;
+    const base = `${API}${path.startsWith('/') ? '' : '/'}${path}`;
+    const token = localStorage.getItem('accessToken');
+    return token ? `${base}?token=${encodeURIComponent(token)}` : base;
   };
 
   const submitNote = async () => {

@@ -1,76 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import {
     AreaChart, Area, XAxis, YAxis, CartesianGrid,
     Tooltip, Legend, ResponsiveContainer, ReferenceLine
 } from 'recharts';
-
-const AI  = process.env.REACT_APP_AI_URL  || 'http://localhost:5000';
-const API = process.env.REACT_APP_API_URL || 'http://localhost:8080';
-const tok = () => localStorage.getItem('accessToken');
-
-const aiReq = path =>
-    fetch(`${AI}${path}`, { headers: { Authorization: `Bearer ${tok()}` } })
-        .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); });
-
-const apiPost = (path, body) =>
-    fetch(`${API}${path}`, {
-        method:'POST',
-        headers: { 'Content-Type':'application/json', Authorization:`Bearer ${tok()}` },
-        body: JSON.stringify(body),
-    }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); });
-
-// ─── Deep space AI palette ────────────────────────────────────────────────────
-const A = {
-    bg:'#070B14', panel:'#0C1220', surface:'#101828', lift:'#162034',
-    border:'#1E2E44', b2:'#162030',
-    text:'#C8E0FF', muted:'#3A5570', dim:'#263848',
-    neon:'#00FFD1', neonD:'#00A880', neonL:'#00201A',
-    pink:'#FF2D78', pinkL:'#1E0014',
-    blue:'#1E90FF', blueL:'#001428',
-    amber:'#FFB020', amberL:'#1E1600',
-    violet:'#9B59F5', violetL:'#120A28',
-    white:'#FFFFFF',
-};
+import { AI, aiReq, A, Skel, StatusDot, AiCard, AiToast, injectAiStyles } from './aiClient';
 
 const CLUSTER_PAL = ['#00FFD1','#FF2D78','#1E90FF','#FFB020','#9B59F5'];
-
-const Skel = ({h=14,w='100%',r=6}) => (
-    <div style={{height:h,width:w,borderRadius:r,background:`linear-gradient(90deg,${A.surface} 25%,${A.lift} 50%,${A.surface} 75%)`,backgroundSize:'400% 100%',animation:'ai-shim 1.5s ease infinite'}}/>
-);
-
-const StatusDot = ({ online }) => (
-    <span style={{
-        display:'inline-flex', alignItems:'center', gap:5,
-        padding:'3px 10px', borderRadius:20, fontSize:10, fontWeight:800,
-        background: online ? A.neonL : '#1A0810',
-        border:`1px solid ${online ? A.neon : A.pink}44`,
-        color: online ? A.neon : A.pink,
-    }}>
-    <span style={{
-        width:6, height:6, borderRadius:'50%',
-        background: online ? A.neon : A.pink,
-        boxShadow: online ? `0 0 8px ${A.neon}` : 'none',
-        animation: online ? 'ai-pulse 2s ease infinite' : 'none',
-    }}/>
-        {online ? 'AI Online' : 'AI Offline'}
-  </span>
-);
-
-const AiCard = ({ title, subtitle, icon, accent=A.neon, badge, children }) => (
-    <div style={{ background:A.panel, borderRadius:14, border:`1px solid ${accent}33`, overflow:'hidden', boxShadow:`0 4px 24px ${accent}06` }}>
-        <div style={{ padding:'16px 20px', borderBottom:`1px solid ${A.border}`, display:'flex', alignItems:'center', justifyContent:'space-between', background:`linear-gradient(135deg,${accent}08,transparent)` }}>
-            <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                <div style={{ width:38, height:38, borderRadius:10, flexShrink:0, background:`${accent}18`, border:`1px solid ${accent}33`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>{icon}</div>
-                <div>
-                    <div style={{ fontSize:14, fontWeight:800, color:A.text, fontFamily:'Orbitron,sans-serif', letterSpacing:0.5 }}>{title}</div>
-                    {subtitle && <div style={{ fontSize:11, color:A.muted, marginTop:2 }}>{subtitle}</div>}
-                </div>
-            </div>
-            {badge && <div style={{ fontSize:10, fontWeight:800, padding:'2px 8px', borderRadius:4, background:`${accent}18`, color:accent, border:`1px solid ${accent}44` }}>{badge}</div>}
-        </div>
-        <div style={{ padding:'18px 20px' }}>{children}</div>
-    </div>
-);
 
 const AiTooltip = ({active,payload,label}) => {
     if(!active||!payload?.length)return null;
@@ -220,69 +156,6 @@ function ClusterMap({ clusters, loading }) {
     );
 }
 
-// ─── Route Optimizer ──────────────────────────────────────────────────────────
-function RouteOptimizer({ onToast }) {
-    const [lat,     setLat]     = useState('6.9271');
-    const [lng,     setLng]     = useState('79.8612');
-    const [result,  setResult]  = useState(null);
-    const [loading, setLoading] = useState(false);
-
-    const run = async () => {
-        setLoading(true);
-        try {
-            const data = await aiReq(`/api/ai/optimize-route?lat=${lat}&lng=${lng}`);
-            setResult(data);
-        } catch {
-            try {
-                const data = await apiPost('/api/location/nearby', { lat:Number(lat), lng:Number(lng), radius:15 });
-                setResult({ technicians: Array.isArray(data)?data:[], source:'backend' });
-            } catch { onToast('Route optimization unavailable','error'); }
-        } finally { setLoading(false); }
-    };
-
-    const techs = result?.technicians || result?.nearestTechnicians || [];
-
-    return (
-        <div>
-            <div style={{ display:'flex', gap:10, alignItems:'flex-end', marginBottom:14, flexWrap:'wrap' }}>
-                {[['FAULT LATITUDE', lat, setLat],['FAULT LONGITUDE', lng, setLng]].map(([label, val, set]) => (
-                    <div key={label} style={{ flex:1, minWidth:120 }}>
-                        <div style={{ fontSize:9, fontWeight:800, color:A.muted, letterSpacing:0.6, marginBottom:3 }}>{label}</div>
-                        <input value={val} onChange={e=>set(e.target.value)} style={{ width:'100%', background:A.surface, border:`1.5px solid ${A.border}`, borderRadius:6, padding:'7px 10px', fontSize:12, color:A.text, outline:'none', fontFamily:'monospace' }}
-                               onFocus={e=>e.target.style.borderColor=A.neon} onBlur={e=>e.target.style.borderColor=A.border}/>
-                    </div>
-                ))}
-                <button onClick={run} disabled={loading} style={{ padding:'9px 20px', borderRadius:8, border:`1.5px solid ${A.neon}`, background:A.neonL, color:A.neon, cursor:'pointer', fontSize:11, fontWeight:800, fontFamily:'Orbitron,sans-serif', opacity:loading?0.5:1, boxShadow:loading?'none':`0 0 12px ${A.neon}33` }}>
-                    {loading ? '⏳' : '🗺️ FIND NEAREST'}
-                </button>
-            </div>
-            <div style={{ padding:'8px 12px', borderRadius:8, background:A.surface, border:`1px solid ${A.border}`, marginBottom:14, fontSize:11, color:A.muted, lineHeight:1.6 }}>
-                Dijkstra + Haversine — finds nearest available technicians by GPS distance. Target: 15–20% travel time reduction.
-            </div>
-            {techs.length > 0 && (
-                <div>
-                    <div style={{ fontSize:9, fontWeight:800, color:A.muted, letterSpacing:0.8, marginBottom:8, fontFamily:'monospace' }}>
-                        NEAREST TECHNICIANS — {result?.source==='backend'?'Haversine (Backend)':'Dijkstra (AI)'}
-                    </div>
-                    {techs.slice(0,5).map((t,i)=>(
-                        <div key={i} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 14px', borderRadius:10, background:A.surface, border:`1px solid ${i===0?A.neon+'55':A.border}`, marginBottom:8, animation:`ai-fin 0.25s ease ${i*0.07}s both`, boxShadow:i===0?`0 0 12px ${A.neon}11`:'none' }}>
-                            <div style={{ width:32, height:32, borderRadius:'50%', flexShrink:0, background:i===0?A.neon:i===1?A.amber:A.muted, display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:900, color:A.bg, fontFamily:'Orbitron,sans-serif' }}>{i+1}</div>
-                            <div style={{ flex:1 }}>
-                                <div style={{ fontSize:13, fontWeight:700, color:A.text }}>{t.technicianName||t.name||`Tech ${i+1}`}</div>
-                                <div style={{ fontSize:10, color:A.muted }}>{t.status||'AVAILABLE'}{t.currentJobId?` · Job #${t.currentJobId}`:''}</div>
-                            </div>
-                            <div style={{ textAlign:'right' }}>
-                                <div style={{ fontSize:16, fontWeight:900, color:i===0?A.neon:A.text, fontFamily:'Orbitron,sans-serif' }}>{t.distanceKm?.toFixed(1)||'?'}km</div>
-                                <div style={{ fontSize:10, color:A.muted }}>~{t.estimatedArrivalMinutes||t.eta||'?'} min</div>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
-        </div>
-    );
-}
-
 // ─── Model Metrics ────────────────────────────────────────────────────────────
 function Metrics({ m, loading }) {
     if (loading) return <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>{[...Array(6)].map((_,i)=><Skel key={i} h={60} r={8}/>)}</div>;
@@ -347,7 +220,7 @@ export default function AIDashboardPage() {
         // Clusters
         setLoading(l => ({ ...l, c:true }));
         try {
-            const d = await aiReq('/api/ai/clusters');
+            const d = await aiReq(`/api/ai/clusters?n_clusters=5`);
             setClusters(d.clusters || d || []);
         } catch (e) { console.error('clusters', e); }
         finally { setLoading(l => ({ ...l, c:false })); setLastFetch(new Date()); }
@@ -356,21 +229,7 @@ export default function AIDashboardPage() {
     useEffect(() => { check(); }, [check]);
     useEffect(() => { if (online) loadAll(); }, [online, loadAll]);
 
-    useEffect(() => {
-        const id = 'ai-css'; if (document.getElementById(id)) return;
-        const s = document.createElement('style'); s.id = id;
-        s.innerHTML = `
-      @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
-      @keyframes ai-shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
-      @keyframes ai-fin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-      @keyframes ai-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.5;transform:scale(1.4)}}
-      @keyframes ai-toastin{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
-      .ai-page *{box-sizing:border-box;}
-      ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:${A.bg}}
-      ::-webkit-scrollbar-thumb{background:${A.border};border-radius:4px}
-    `;
-        document.head.appendChild(s);
-    }, []);
+    useEffect(() => { injectAiStyles(); }, []);
 
     return (
         <div className="ai-page" style={{ background:A.bg, minHeight:'100vh', padding:'28px 32px', fontFamily:'system-ui,sans-serif' }}>
@@ -420,6 +279,38 @@ export default function AIDashboardPage() {
             {online && (
                 <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
 
+                    {/* Model Training pointer — SRS 5.6.7's CSV upload + retrain flow now
+                        lives on its own page (job-based, with Activate/Rollback governance)
+                        instead of being a toggle here. */}
+                    <Link to="/model-training" style={{ textDecoration:'none' }}>
+                        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'16px 20px', borderRadius:14, background:A.panel, border:`1px solid ${A.violet}33`, cursor:'pointer' }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                                <div style={{ width:38, height:38, borderRadius:10, background:`${A.violet}18`, border:`1px solid ${A.violet}33`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>🧠</div>
+                                <div>
+                                    <div style={{ fontSize:14, fontWeight:800, color:A.text, fontFamily:'Orbitron,sans-serif' }}>Retrain from a CSV upload</div>
+                                    <div style={{ fontSize:11, color:A.muted, marginTop:2 }}>Model Training panel — upload data, review candidate metrics, activate or roll back</div>
+                                </div>
+                            </div>
+                            <span style={{ color:A.violet, fontSize:18 }}>→</span>
+                        </div>
+                    </Link>
+
+                    {/* SRS 5.6.8 (FR-33) — combines this page's own forecast + clusters into
+                        per-hotspot Technician/Vehicle/Material suggestions; own page, same
+                        pattern as Model Training above. */}
+                    <Link to="/resource-planning" style={{ textDecoration:'none' }}>
+                        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'16px 20px', borderRadius:14, background:A.panel, border:`1px solid ${A.neon}33`, cursor:'pointer' }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                                <div style={{ width:38, height:38, borderRadius:10, background:`${A.neon}18`, border:`1px solid ${A.neon}33`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>🧰</div>
+                                <div>
+                                    <div style={{ fontSize:14, fontWeight:800, color:A.text, fontFamily:'Orbitron,sans-serif' }}>Predictive Resource Planning</div>
+                                    <div style={{ fontSize:11, color:A.muted, marginTop:2 }}>Resource Planning panel — predicted hotspots with suggested Technician/Vehicle/Material quantities</div>
+                                </div>
+                            </div>
+                            <span style={{ color:A.neon, fontSize:18 }}>→</span>
+                        </div>
+                    </Link>
+
                     {/* Metrics */}
                     <AiCard title="Model Performance" subtitle="Prophet evaluation metrics" icon="📐" accent={A.neon} badge="LIVE METRICS">
                         <Metrics m={metrics} loading={loading.f && !metrics}/>
@@ -435,25 +326,14 @@ export default function AIDashboardPage() {
                         <ClusterMap clusters={clusters} loading={loading.c}/>
                     </AiCard>
 
-                    {/* Route */}
-                    <AiCard title="Route Optimisation" subtitle="Dijkstra + Haversine — find nearest available technician" icon="🚦" accent={A.amber} badge="DIJKSTRA">
-                        <RouteOptimizer onToast={(m,t) => setToast({msg:m,type:t})}/>
-                    </AiCard>
-
                     {/* Footer */}
                     <div style={{ padding:'12px 16px', borderRadius:8, background:A.surface, border:`1px solid ${A.border}`, fontSize:11, color:A.muted, lineHeight:1.7 }}>
-                        <b style={{ color:A.text }}>About:</b> Flask service on port 5000. Prophet trains on 12–24 months of fault data. K-Means groups fault GPS coordinates into 5 demand zones across Sri Lanka. Dijkstra + Haversine finds nearest technician with target 15–20% travel time reduction.
+                        <b style={{ color:A.text }}>About:</b> Flask service on port 5000. Prophet trains on 12–24 months of fault data. K-Means groups fault GPS coordinates into 5 demand zones across Sri Lanka.
                     </div>
                 </div>
             )}
 
-            {toast && (
-                <div style={{ position:'fixed', bottom:24, right:24, zIndex:3000, background:A.panel, border:`2px solid ${toast.type==='error'?A.pink:A.neon}`, borderRadius:10, padding:'10px 18px', fontSize:12, color:A.text, display:'flex', alignItems:'center', gap:10, animation:'ai-toastin 0.22s ease', fontFamily:'monospace', maxWidth:360 }}>
-                    <span>{toast.type==='error'?'❌':'✅'}</span>
-                    <span style={{ flex:1 }}>{toast.msg}</span>
-                    <button onClick={() => setToast(null)} style={{ background:'none', border:'none', color:A.muted, cursor:'pointer', fontSize:16, lineHeight:1, padding:'0 2px' }}>×</button>
-                </div>
-            )}
+            <AiToast toast={toast} onClose={() => setToast(null)}/>
         </div>
     );
 }

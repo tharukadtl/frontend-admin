@@ -1,0 +1,143 @@
+name: E2E (live backend)
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cypress-live:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout frontend-admin
+        uses: actions/checkout@v4
+        with:
+          path: frontend-admin
+
+      - name: Checkout fieldops
+        uses: actions/checkout@v4
+        with:
+          repository: tharukadtl/fieldops
+          path: fieldops
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install frontend-admin dependencies
+        working-directory: frontend-admin
+        run: npm ci
+
+      # Reuses fieldops's own proven Testcontainers wiring (src/test/resources/application.yml)
+      # via Spring Boot's documented useTestClasspath run mode -- not a second, parallel mechanism.
+      # useTestClasspath alone does NOT give test resources precedence over
+      # src/main/resources/application.yml (confirmed empirically -- JWT_SECRET failed to resolve
+      # without it), so --spring.config.location forces the test config explicitly, the same
+      # technique ApplicationBootSecurityTest already uses for the opposite case.
+      #
+      # app.rate-limit.max-requests-per-minute is also overridden here, CI-only -- confirmed
+      # empirically (2026-09-04) that the real 100/min NFR 7.1.3 limiter (RateLimitService.java,
+      # keyed per authenticated user) gets tripped by this workflow's own live-spec traffic, since
+      # every live spec authenticates as the same single seeded superadmin (no other bootstrap
+      # account exists -- see the admin-bootstrap Major finding). This does not touch the
+      # production default (100, unset here) -- it only raises the cap for this ephemeral
+      # Testcontainers-backed run-mode instance.
+      - name: Start fieldops (Testcontainers-backed run mode)
+        working-directory: fieldops
+        run: |
+          nohup ./mvnw spring-boot:run \
+            -Dspring-boot.run.useTestClasspath=true \
+            "-Dspring-boot.run.arguments=--spring.config.location=file:src/test/resources/application.yml --app.rate-limit.max-requests-per-minute=100000" \
+            > fieldops-run.log 2>&1 &
+          echo $! > fieldops.pid
+
+      - name: Wait for fieldops to be healthy
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8080/actuator/health 2>/dev/null | grep -q '"status":"UP"'; then
+              echo "fieldops is UP"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "fieldops never became healthy -- log follows:"
+          cat fieldops/fieldops-run.log
+          exit 1
+
+      # Testcontainers logs its own resolved connection URL during startup
+      # ("...at jdbc:mysql://localhost:PORT/..."), confirmed empirically -- no docker inspection
+      # needed to find the ephemeral host port an external process (this seed script) needs to
+      # reach the same database the running app just connected to.
+      - name: Discover the Testcontainers MySQL port
+        id: db
+        run: |
+          PORT=$(grep -o 'jdbc:mysql://localhost:[0-9]*' fieldops/fieldops-run.log | head -1 | grep -o '[0-9]*$')
+          if [ -z "$PORT" ]; then
+            echo "Could not find the Testcontainers MySQL port in fieldops-run.log"
+            exit 1
+          fi
+          echo "port=$PORT" >> "$GITHUB_OUTPUT"
+
+      # Once per CI session, before any live-backend spec -- not per-spec. Idempotent regardless.
+      # FIELDOPS_DB_NAME=test, not slt_fieldops_db_test: confirmed empirically that Testcontainers'
+      # MySQLContainer always provisions its own default "test" database and grants its default
+      # "test" user access only to that, regardless of the database name in the JDBC URL path.
+      - name: Seed the bootstrap SUPER_ADMIN account
+        working-directory: frontend-admin
+        env:
+          FIELDOPS_DB_HOST: localhost
+          FIELDOPS_DB_PORT: ${{ steps.db.outputs.port }}
+          FIELDOPS_DB_NAME: test
+          FIELDOPS_DB_USER: test
+          FIELDOPS_DB_PASSWORD: test
+        run: python3 cypress/support/seed_live_fixtures.py seed-admin
+
+      - name: Start frontend-admin dev server
+        working-directory: frontend-admin
+        run: |
+          CI=true nohup npm start > frontend-run.log 2>&1 &
+          echo $! > frontend.pid
+
+      - name: Wait for frontend-admin to be ready
+        run: npx --yes wait-on http://localhost:3000 --timeout 60000
+
+      - name: Run live-backend Cypress specs
+        working-directory: frontend-admin
+        env:
+          FIELDOPS_DB_HOST: localhost
+          FIELDOPS_DB_PORT: ${{ steps.db.outputs.port }}
+          FIELDOPS_DB_NAME: test
+          FIELDOPS_DB_USER: test
+          FIELDOPS_DB_PASSWORD: test
+        run: |
+          npx cypress run --spec "\
+          cypress/e2e/opmcs/provinceDropdown.cy.js,\
+          cypress/e2e/faults/attachCircuit.cy.js,\
+          cypress/e2e/users/workGroupSelector.cy.js,\
+          cypress/e2e/workgroups/workGroupManagement.cy.js,\
+          cypress/e2e/faults/attachCause.cy.js"
+
+      # kill -TERM (not -9) gives Ryuk's own reaper the fastest possible detection path, but
+      # confirmed empirically this still holds even on an abrupt kill -9 -- Testcontainers'
+      # containers (including Ryuk itself) were fully gone within ~15s of a hard kill in testing,
+      # no graceful shutdown required. Runs on every outcome, not just success.
+      - name: Stop fieldops and frontend-admin
+        if: always()
+        run: |
+          [ -f fieldops/fieldops.pid ] && kill "$(cat fieldops/fieldops.pid)" 2>/dev/null || true
+          [ -f frontend-admin/frontend.pid ] && kill "$(cat frontend-admin/frontend.pid)" 2>/dev/null || true
+
+      - name: Upload Cypress artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots-and-logs
+          path: |
+            frontend-admin/cypress/screenshots
+            frontend-admin/fieldops/fieldops-run.log
+            frontend-admin/frontend-run.log
+          if-no-files-found: ignore
