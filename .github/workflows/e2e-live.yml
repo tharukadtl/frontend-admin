@@ -16,7 +16,7 @@ jobs:
       - name: Checkout fieldops
         uses: actions/checkout@v4
         with:
-          repository: tharukadtl/fieldops
+          repository: tharukadtl/slt-backend
           path: fieldops
 
       - uses: actions/setup-java@v4
