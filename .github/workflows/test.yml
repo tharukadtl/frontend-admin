@@ -27,5 +27,19 @@ jobs:
       # CI-portable equivalent yet -- see QA_Compliance_Consolidated_Report.md's frontend-admin CI
       # entry for the full breakdown and recommendation. Scoped out as a deliberate follow-up
       # rather than blocking this pipeline on it.
+      # jest-junit reads its config from JEST_JUNIT_* env vars rather than a
+      # package.json/jest.config.js edit, since CRA's react-scripts restricts
+      # overriding several jest config keys without ejecting -- --reporters is
+      # a plain CLI flag react-scripts test forwards straight to the
+      # underlying Jest CLI, so this needs neither.
       - name: Run tests
-        run: npm test
+        env:
+          JEST_JUNIT_OUTPUT_DIR: reports
+          JEST_JUNIT_OUTPUT_NAME: jest-junit.xml
+        run: npm test -- --reporters=default --reporters=jest-junit
+
+      # if: always() so a summary appears even when tests fail. ubuntu-latest
+      # ships python3 by default, no setup step needed.
+      - name: Test summary
+        if: always()
+        run: python3 .github/scripts/summarize_junit.py "reports/jest-junit.xml"

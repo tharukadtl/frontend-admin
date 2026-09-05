@@ -114,12 +114,20 @@ jobs:
           FIELDOPS_DB_USER: test
           FIELDOPS_DB_PASSWORD: test
         run: |
-          npx cypress run --spec "\
+          npx cypress run --reporter junit \
+          --reporter-options "mochaFile=reports/cypress-[hash].xml" \
+          --spec "\
           cypress/e2e/opmcs/provinceDropdown.cy.js,\
           cypress/e2e/faults/attachCircuit.cy.js,\
           cypress/e2e/users/workGroupSelector.cy.js,\
           cypress/e2e/workgroups/workGroupManagement.cy.js,\
           cypress/e2e/faults/attachCause.cy.js"
+
+      # if: always() so a summary appears even when specs fail -- that's when it matters most.
+      # ubuntu-latest ships python3 by default, no setup step needed.
+      - name: Test summary
+        if: always()
+        run: python3 .github/scripts/summarize_junit.py "reports/cypress-*.xml"
 
       # kill -TERM (not -9) gives Ryuk's own reaper the fastest possible detection path, but
       # confirmed empirically this still holds even on an abrupt kill -9 -- Testcontainers'
