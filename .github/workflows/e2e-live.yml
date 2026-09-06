@@ -19,6 +19,13 @@ jobs:
           repository: tharukadtl/slt-backend
           path: fieldops
 
+      # fieldops's own mvnw is committed with the executable bit set (git ls-files -s mvnw ->
+      # 100755, confirmed on origin/master), so this checkout should already preserve it --
+      # but making it explicit here means this workflow doesn't depend on that other repo's file
+      # permissions being perfectly preserved through git forever. Harmless no-op if already +x.
+      - name: Ensure fieldops's mvnw is executable
+        run: chmod +x fieldops/mvnw
+
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
