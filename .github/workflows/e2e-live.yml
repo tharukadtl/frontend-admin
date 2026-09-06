@@ -89,6 +89,15 @@ jobs:
           fi
           echo "port=$PORT" >> "$GITHUB_OUTPUT"
 
+      # seed_live_fixtures.py's only non-stdlib import is pymysql (argparse/os/sys/time are all
+      # stdlib, and it connects directly to fieldops's datasource via raw SQL -- no requests/HTTP
+      # calls) -- confirmed by reading its imports directly, not assumed. ubuntu-latest's python3
+      # has no third-party packages preinstalled, unlike a dev machine that may already have this
+      # globally.
+      - name: Install seed_live_fixtures.py dependencies
+        working-directory: frontend-admin
+        run: pip install -r cypress/support/requirements.txt
+
       # Once per CI session, before any live-backend spec -- not per-spec. Idempotent regardless.
       # FIELDOPS_DB_NAME=test, not slt_fieldops_db_test: confirmed empirically that Testcontainers'
       # MySQLContainer always provisions its own default "test" database and grants its default
