@@ -134,6 +134,7 @@ jobs:
       # ubuntu-latest ships python3 by default, no setup step needed.
       - name: Test summary
         if: always()
+        working-directory: frontend-admin
         run: python3 .github/scripts/summarize_junit.py "reports/cypress-*.xml"
 
       # kill -TERM (not -9) gives Ryuk's own reaper the fastest possible detection path, but
