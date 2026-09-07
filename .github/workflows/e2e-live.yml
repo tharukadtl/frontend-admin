@@ -9,12 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout frontend-admin
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: frontend-admin
 
       - name: Checkout fieldops
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: tharukadtl/slt-backend
           path: fieldops
@@ -26,12 +26,12 @@ jobs:
       - name: Ensure fieldops's mvnw is executable
         run: chmod +x fieldops/mvnw
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 

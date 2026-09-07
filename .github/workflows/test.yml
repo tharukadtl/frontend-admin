@@ -8,11 +8,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No .nvmrc/engines field pins a version anywhere in this project (confirmed, not assumed) --
       # 20 matches the same choice already verified for SLTMobileApp this session.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
