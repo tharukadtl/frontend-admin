@@ -191,7 +191,9 @@ describe('OPMC Province dropdown (live) — selecting a province actually persis
     cy.contains('OPMC updated').should('be.visible');
 
     fetchOpmcByCode(token, code).then(after => {
-      expect(after.province, `${code}'s province after the edit, via a fresh GET`).to.eq('SABARAGAMUWA');
+      // DELIBERATE-BREAK-FOR-CI-VERIFICATION: wrong expected value, to confirm a failing
+      // spec's screenshot/video artifacts actually get uploaded. Reverted immediately after.
+      expect(after.province, `${code}'s province after the edit, via a fresh GET`).to.eq('WRONG_PROVINCE_DELIBERATE_BREAK');
     });
   });
 });
