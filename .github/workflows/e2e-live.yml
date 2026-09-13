@@ -160,10 +160,12 @@ jobs:
       # (true) -- a failing spec already produces a screenshot with no config change needed.
       # video, also unset, defaulted to false as of Cypress 13.0.0 (changed from true in
       # earlier versions) -- confirmed via the installed 13.17.0's actual behavior, not
-      # assumed from older docs -- so cypress/videos/ would otherwise never exist. Enabled
-      # explicitly in cypress.config.js so a failing run leaves a real video, not just a
-      # screenshot; Cypress 13 automatically discards the video for any spec that fully
-      # passed, so this doesn't add noise to a green run.
+      # assumed from older docs -- so cypress/videos/ would otherwise never exist without
+      # cypress.config.js's video: true. Verified via a real deliberately-broken run
+      # (2026-09-13, since reverted) that the resulting artifact contains both the failing
+      # spec's screenshot and every spec's video (a plain, non-Cloud `cypress run` doesn't
+      # scope video capture to only the failing spec) -- if: failure() alone is what keeps
+      # a green run from uploading anything.
       - name: Upload Cypress artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
