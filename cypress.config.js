@@ -34,6 +34,13 @@ module.exports = defineConfig({
     baseUrl: 'http://localhost:3000',
     supportFile: false,
     specPattern: 'cypress/e2e/**/*.cy.js',
+    // Neither screenshotOnRunFailure nor video was set here before (confirmed by reading this
+    // file, not assumed) -- screenshotOnRunFailure's default (true) already covers failure
+    // screenshots. video's default changed to false as of Cypress 13.0.0 (this project runs
+    // 13.17.0, confirmed via `cypress --version`), so cypress/videos/ would never be produced
+    // without this. Cypress 13 auto-deletes the recording for any spec that fully passed, so
+    // enabling this only leaves real video evidence behind for a run that actually failed.
+    video: true,
     setupNodeEvents(on) {
       // Renamed + extended from seed_h1c_fault.py, 2026-09-03 -- see the script's own module
       // docstring for the full story (real API seeding replaced this for attachCircuit's
