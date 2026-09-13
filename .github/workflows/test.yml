@@ -32,6 +32,10 @@ jobs:
       # overriding several jest config keys without ejecting -- --reporters is
       # a plain CLI flag react-scripts test forwards straight to the
       # underlying Jest CLI, so this needs neither.
+      # package.json's own "test" script now carries --coverage (react-scripts test
+      # --watchAll=false --coverage) -- this just appends the jest-junit reporter flags on
+      # top of it, same as before. Jest's default coverageDirectory is "coverage/" at repo
+      # root, confirmed via package.json (no jest.coverageDirectory override present).
       - name: Run tests
         env:
           JEST_JUNIT_OUTPUT_DIR: reports
@@ -42,4 +46,15 @@ jobs:
       # ships python3 by default, no setup step needed.
       - name: Test summary
         if: always()
-        run: python3 .github/scripts/summarize_junit.py "reports/jest-junit.xml"
+        run: python3 .github/scripts/summarize_junit.py "reports/jest-junit.xml" --title "UI Tests"
+
+      # Jest writes coverage/ regardless of individual test pass/fail (only a config/compile
+      # error would prevent it), so this uploads on every outcome, not just success.
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 30
+          if-no-files-found: ignore

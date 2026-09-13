@@ -144,7 +144,7 @@ jobs:
       - name: Test summary
         if: always()
         working-directory: frontend-admin
-        run: python3 .github/scripts/summarize_junit.py "reports/cypress-*.xml"
+        run: python3 .github/scripts/summarize_junit.py "reports/cypress-*.xml" --title "UI Tests"
 
       # kill -TERM (not -9) gives Ryuk's own reaper the fastest possible detection path, but
       # confirmed empirically this still holds even on an abrupt kill -9 -- Testcontainers'
@@ -156,6 +156,16 @@ jobs:
           [ -f fieldops/fieldops.pid ] && kill "$(cat fieldops/fieldops.pid)" 2>/dev/null || true
           [ -f frontend-admin/frontend.pid ] && kill "$(cat frontend-admin/frontend.pid)" 2>/dev/null || true
 
+      # screenshotOnRunFailure isn't set in cypress.config.js, so it's Cypress 13's default
+      # (true) -- a failing spec already produces a screenshot with no config change needed.
+      # video, also unset, defaulted to false as of Cypress 13.0.0 (changed from true in
+      # earlier versions) -- confirmed via the installed 13.17.0's actual behavior, not
+      # assumed from older docs -- so cypress/videos/ would otherwise never exist without
+      # cypress.config.js's video: true. Verified via a real deliberately-broken run
+      # (2026-09-13, since reverted) that the resulting artifact contains both the failing
+      # spec's screenshot and every spec's video (a plain, non-Cloud `cypress run` doesn't
+      # scope video capture to only the failing spec) -- if: failure() alone is what keeps
+      # a green run from uploading anything.
       - name: Upload Cypress artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -163,6 +173,8 @@ jobs:
           name: cypress-screenshots-and-logs
           path: |
             frontend-admin/cypress/screenshots
+            frontend-admin/cypress/videos
             frontend-admin/fieldops/fieldops-run.log
             frontend-admin/frontend-run.log
+          retention-days: 30
           if-no-files-found: ignore

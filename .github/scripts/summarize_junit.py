@@ -5,11 +5,14 @@ jest-junit, pytest --junitxml, Cypress's bundled mocha-junit-reporter) since
 they all share the same <testsuite tests= failures= errors= skipped=> shape,
 with or without an outer <testsuites> wrapper.
 
-Usage: python3 summarize_junit.py "<glob-pattern>" ["<glob-pattern>" ...]
+Usage: python3 summarize_junit.py "<glob-pattern>" ["<glob-pattern>" ...] [--title "Heading"]
+
+--title overrides the "Test Summary" heading (e.g. "UI Tests") so a repo running this script
+from more than one workflow can tell each run's Job Summary apart at a glance.
 """
+import argparse
 import glob
 import os
-import sys
 import xml.etree.ElementTree as ET
 
 
@@ -22,12 +25,17 @@ def testsuites_in(root):
 
 
 def main():
-    patterns = sys.argv[1:]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("patterns", nargs="+")
+    parser.add_argument("--title", default="Test Summary")
+    args = parser.parse_args()
+    patterns = args.patterns
+
     files = []
     for p in patterns:
         files.extend(sorted(glob.glob(p, recursive=True)))
 
-    lines = ["## Test Summary", ""]
+    lines = [f"## {args.title}", ""]
 
     if not files:
         lines.append(f"No JUnit XML reports found matching: {', '.join(patterns)}")

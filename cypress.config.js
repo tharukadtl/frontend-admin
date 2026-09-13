@@ -34,6 +34,17 @@ module.exports = defineConfig({
     baseUrl: 'http://localhost:3000',
     supportFile: false,
     specPattern: 'cypress/e2e/**/*.cy.js',
+    // Neither screenshotOnRunFailure nor video was set here before (confirmed by reading this
+    // file, not assumed) -- screenshotOnRunFailure's default (true) already covers failure
+    // screenshots. video's default changed to false as of Cypress 13.0.0 (this project runs
+    // 13.17.0, confirmed via `cypress --version`), so cypress/videos/ would never be produced
+    // without this. Confirmed empirically (2026-09-13 CI run) that plain `cypress run` (no
+    // --record/Cypress Cloud) keeps every spec's video regardless of pass/fail -- the
+    // "delete video for passing specs" behavior some Cypress docs describe is a Cloud-recording
+    // feature, not a local default. That's fine here: the upload step only runs on failure(),
+    // so a green run still uploads nothing; a red run's artifact just includes every spec's
+    // video, not only the failing one's.
+    video: true,
     setupNodeEvents(on) {
       // Renamed + extended from seed_h1c_fault.py, 2026-09-03 -- see the script's own module
       // docstring for the full story (real API seeding replaced this for attachCircuit's
