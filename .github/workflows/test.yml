@@ -44,6 +44,47 @@ jobs:
         if: always()
         run: python3 .github/scripts/summarize_junit.py "reports/jest-junit.xml"
 
+  # Builds the exact image fieldops/docker-compose.yml pulls onto the VM -- CI builds and pushes
+  # it here so the production container is byte-for-byte what the test job above just tested,
+  # never rebuilt from source on the VM. Gated the same way notify-deploy already is (only
+  # master, only on a green test job) since a broken/PR build has no business landing in the
+  # registry.
+  #
+  # REACT_APP_API_URL / REACT_APP_AI_URL are baked into the static bundle at *build* time (see
+  # frontend-admin/Dockerfile's ARGs) -- now that the image is built here instead of on the VM,
+  # these must be the real production values, supplied as repo secrets. If PROD_REACT_APP_API_URL
+  # / PROD_REACT_APP_AI_URL secrets are not set, build-push-action passes empty strings and the
+  # deployed bundle will call relative/blank URLs -- set these secrets before relying on this job.
+  build-and-push:
+    needs: test
+    if: success() && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend-admin image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            REACT_APP_API_URL=${{ secrets.PROD_REACT_APP_API_URL }}
+            REACT_APP_AI_URL=${{ secrets.PROD_REACT_APP_AI_URL }}
+          tags: |
+            ghcr.io/tharukadtl/frontend-admin:${{ github.sha }}
+            ghcr.io/tharukadtl/frontend-admin:latest
+
   # Fires only for a real push to master with a green test job -- never for a PR run or a
   # push to any other branch, matching the same "only master, only on success" convention
   # fieldops/deploy.yml's own workflow_run trigger already enforces via its `branches: [master]`
